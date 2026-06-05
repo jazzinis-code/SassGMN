@@ -14,6 +14,7 @@ import { ReviewsModule } from './reviews/reviews.module';
 import { ResponsesModule } from './responses/responses.module';
 import { AiModule } from './ai/ai.module';
 import { GoogleModule } from './google/google.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { GoogleModule } from './google/google.module';
     ResponsesModule,
     AiModule,
     GoogleModule,
+    DashboardModule,
   ],
   providers: [
     // Aplica ThrottlerGuard globalmente em todas as rotas

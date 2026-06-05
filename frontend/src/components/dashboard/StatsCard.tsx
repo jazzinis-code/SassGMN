@@ -6,6 +6,7 @@ interface StatsCardProps {
   title: string;
   value: string | number;
   icon: React.ReactNode;
+  description?: string;
   trend?: {
     value: number;
     isPositive: boolean;
@@ -13,7 +14,7 @@ interface StatsCardProps {
   className?: string;
 }
 
-export function StatsCard({ title, value, icon, trend, className }: StatsCardProps) {
+export function StatsCard({ title, value, icon, description, trend, className }: StatsCardProps) {
   return (
     <Card className={className}>
       <CardContent className="py-5">
@@ -21,6 +22,9 @@ export function StatsCard({ title, value, icon, trend, className }: StatsCardPro
           <div>
             <p className="text-sm font-medium text-gray-500">{title}</p>
             <p className="text-2xl font-bold text-gray-900 mt-1">{value}</p>
+            {description && (
+              <p className="text-xs text-gray-400 mt-1">{description}</p>
+            )}
             {trend && (
               <p
                 className={cn(
@@ -28,7 +32,7 @@ export function StatsCard({ title, value, icon, trend, className }: StatsCardPro
                   trend.isPositive ? 'text-green-600' : 'text-red-600'
                 )}
               >
-                {trend.isPositive ? '+' : ''}{trend.value}% em relacao ao periodo anterior
+                {trend.isPositive ? '+' : ''}{trend.value}% em relação ao período anterior
               </p>
             )}
           </div>

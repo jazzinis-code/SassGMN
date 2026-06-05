@@ -141,7 +141,15 @@ export interface FilterReviewsDto {
 
 export interface DashboardStats {
   totalReviews: number;
-  pendingReviews: number;
-  publishedResponses: number;
   totalBusinesses: number;
+  totalResponses: number;
+  pendingReviews: number;
+  generatedReviews: number;
+  publishedResponses: number;
+  rejectedResponses: number;
+  averageRating: number;
+  averageResponseTimeHours: number | null;
+  ratingDistribution: Record<string, number>;
+  newReviewsLast7Days: number;
+  publishedLast7Days: number;
 }
