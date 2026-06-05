@@ -3,6 +3,7 @@ import { BullModule } from '@nestjs/bull';
 import { ReviewsService } from './reviews.service';
 import { ReviewsController } from './reviews.controller';
 import { ReviewsSyncProcessor } from './reviews-sync.processor';
+import { ReviewsSchedulerService } from './reviews-scheduler.service';
 import { BusinessesModule } from '../businesses/businesses.module';
 import { GoogleModule } from '../google/google.module';
 
@@ -24,7 +25,7 @@ import { GoogleModule } from '../google/google.module';
     GoogleModule,
   ],
   controllers: [ReviewsController],
-  providers: [ReviewsService, ReviewsSyncProcessor],
+  providers: [ReviewsService, ReviewsSyncProcessor, ReviewsSchedulerService],
   exports: [ReviewsService],
 })
 export class ReviewsModule {}
