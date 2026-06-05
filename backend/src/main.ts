@@ -3,10 +3,14 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
 import * as compression from 'compression';
+import { initSentry } from './common/sentry/sentry.config';
 import { AppModule } from './app.module';
 import { REQUIRED_ENV_VARS } from './config/configuration';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+
+// ── Sentry deve ser inicializado antes de qualquer import NestJS ─────────────
+initSentry();
 
 /**
  * Valida se todas as variáveis de ambiente obrigatórias estão definidas.

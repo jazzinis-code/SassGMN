@@ -4,11 +4,15 @@ import {
   ArgumentsHost,
   HttpException,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { captureException } from '../sentry/sentry.config';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
+  private readonly logger = new Logger(AllExceptionsFilter.name);
+
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
@@ -24,6 +28,20 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? exception.getResponse()
         : 'Internal server error';
 
+    // Reporta ao Sentry apenas erros 5xx (erros de servidor, não de cliente)
+    // 4xx são erros esperados (validação, auth) e não devem gerar alertas
+    if (status >= 500) {
+      captureException(exception, {
+        url: request.url,
+        method: request.method,
+        statusCode: status,
+      });
+      this.logger.error(
+        `[${request.method}] ${request.url} → ${status}`,
+        exception instanceof Error ? exception.stack : String(exception),
+      );
+    }
+
     response.status(status).json({
       statusCode: status,
       timestamp: new Date().toISOString(),
@@ -31,7 +49,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       message:
         typeof message === 'string'
           ? message
-          : (message as Record<string, unknown>).message || message,
+          : (message as Record<string, unknown>).message ?? message,
     });
   }
 }
