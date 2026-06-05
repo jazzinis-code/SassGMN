@@ -4,6 +4,7 @@ import { Queue } from 'bull';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { BusinessesService } from '../businesses/businesses.service';
 import { GoogleService } from '../google/google.service';
+import { AuditService, AuditAction } from '../audit/audit.service';
 import { Review, Prisma, ReviewResponseStatus } from '@prisma/client';
 import { FilterReviewsDto } from './dto/filter-reviews.dto';
 import { PaginatedResponseDto } from '../common/dto/pagination.dto';
@@ -14,6 +15,7 @@ export class ReviewsService {
     private readonly prisma: PrismaService,
     private readonly businessesService: BusinessesService,
     private readonly googleService: GoogleService,
+    private readonly audit: AuditService,
     @InjectQueue('reviews-sync') private readonly syncQueue: Queue,
   ) {}
 
@@ -98,7 +100,11 @@ export class ReviewsService {
       googleProfileId: business.googleProfileId,
     });
 
-    return { message: 'Sincronizacao iniciada. As avaliacoes serao atualizadas em breve.' };
+    await this.audit.log(userId, AuditAction.REVIEWS_SYNC_REQUESTED, {
+      businessId: business.id,
+    });
+
+    return { message: 'Sincronização iniciada. As avaliações serão atualizadas em breve.' };
   }
 
   async processSyncJob(businessId: string, userId: string, googleProfileId: string): Promise<void> {

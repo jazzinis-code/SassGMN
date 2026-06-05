@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UsersService } from '../users/users.service';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { AuditService, AuditAction } from '../audit/audit.service';
 
 export interface GoogleProfile {
   id: string;
@@ -23,40 +24,39 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly usersService: UsersService,
     private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
   ) {}
 
   async validateGoogleUser(profile: GoogleProfile) {
     let user = await this.usersService.findByGoogleId(profile.id);
+    let isNewUser = false;
 
     if (!user) {
       user = await this.usersService.findByEmail(profile.email);
 
       if (user) {
-        user = await this.usersService.update(user.id, {
-          googleId: profile.id,
-        });
+        user = await this.usersService.update(user.id, { googleId: profile.id });
       } else {
         user = await this.usersService.create({
           name: profile.name,
           email: profile.email,
           googleId: profile.id,
         });
+        isNewUser = true;
       }
     }
 
-    // Só salva/atualiza tokens se um refreshToken válido foi recebido.
-    // O Google só envia refreshToken na primeira autorização (prompt: consent).
     if (profile.refreshToken) {
-      await this.saveGoogleTokens(
-        user.id,
-        profile.accessToken,
-        profile.refreshToken,
-        profile.expiresIn,
-      );
+      await this.saveGoogleTokens(user.id, profile.accessToken, profile.refreshToken, profile.expiresIn);
     } else {
-      // Re-login: atualiza apenas o accessToken, preserva o refreshToken existente
       await this.updateAccessToken(user.id, profile.accessToken, profile.expiresIn);
     }
+
+    await this.audit.log(
+      user.id,
+      isNewUser ? AuditAction.USER_REGISTER : AuditAction.USER_LOGIN,
+      { email: user.email },
+    );
 
     return user;
   }

@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { AuditService, AuditAction } from '../audit/audit.service';
 import { Business, Prisma } from '@prisma/client';
 import { CreateBusinessDto } from './dto/create-business.dto';
 import { UpdateBusinessDto } from './dto/update-business.dto';
@@ -7,15 +8,18 @@ import { PaginationDto, PaginatedResponseDto } from '../common/dto/pagination.dt
 
 @Injectable()
 export class BusinessesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async create(userId: string, dto: CreateBusinessDto): Promise<Business> {
-    return this.prisma.business.create({
-      data: {
-        ...dto,
-        userId,
-      },
+    const business = await this.prisma.business.create({ data: { ...dto, userId } });
+    await this.audit.log(userId, AuditAction.BUSINESS_CREATED, {
+      businessId: business.id,
+      name: business.name,
     });
+    return business;
   }
 
   async findAllByUser(
@@ -60,16 +64,18 @@ export class BusinessesService {
 
   async update(id: string, userId: string, dto: UpdateBusinessDto): Promise<Business> {
     await this.findById(id, userId);
-
-    return this.prisma.business.update({
-      where: { id },
-      data: dto,
-    });
+    const updated = await this.prisma.business.update({ where: { id }, data: dto });
+    await this.audit.log(userId, AuditAction.BUSINESS_UPDATED, { businessId: id });
+    return updated;
   }
 
   async remove(id: string, userId: string): Promise<void> {
-    await this.findById(id, userId);
+    const business = await this.findById(id, userId);
     await this.prisma.business.delete({ where: { id } });
+    await this.audit.log(userId, AuditAction.BUSINESS_DELETED, {
+      businessId: id,
+      name: business.name,
+    });
   }
 
   async findByGoogleProfileId(googleProfileId: string): Promise<Business | null> {

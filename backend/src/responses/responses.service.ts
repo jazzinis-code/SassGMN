@@ -9,6 +9,7 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
 import { GoogleService } from '../google/google.service';
 import { BusinessesService } from '../businesses/businesses.service';
+import { AuditService, AuditAction } from '../audit/audit.service';
 import { Response, ResponseStatus, ReviewResponseStatus, AutomationMode } from '@prisma/client';
 import { PaginationDto, PaginatedResponseDto } from '../common/dto/pagination.dto';
 
@@ -21,6 +22,7 @@ export class ResponsesService {
     private readonly aiService: AiService,
     private readonly googleService: GoogleService,
     private readonly businessesService: BusinessesService,
+    private readonly audit: AuditService,
   ) {}
 
   // ─── Generate ────────────────────────────────────────────────────────────────
@@ -61,6 +63,14 @@ export class ResponsesService {
       data: { responseStatus: ReviewResponseStatus.GENERATED },
     });
 
+    await this.audit.log(userId, AuditAction.RESPONSE_GENERATED, {
+      reviewId,
+      responseId: response.id,
+      businessId: review.businessId,
+      rating: review.rating,
+      automationMode: review.business.automationMode,
+    });
+
     const mode = review.business.automationMode;
 
     // AUTO: gera, aprova e publica automaticamente para todas as notas
@@ -96,13 +106,16 @@ export class ResponsesService {
       throw new BadRequestException('Resposta já foi processada');
     }
 
-    return this.prisma.response.update({
+    const updated = await this.prisma.response.update({
       where: { id: responseId },
       data: {
         status: ResponseStatus.APPROVED,
         publishedText: publishedText ?? response.generatedText,
       },
     });
+
+    await this.audit.log(userId, AuditAction.RESPONSE_APPROVED, { responseId });
+    return updated;
   }
 
   // ─── Reject ──────────────────────────────────────────────────────────────────
@@ -124,6 +137,7 @@ export class ResponsesService {
       data: { responseStatus: ReviewResponseStatus.REJECTED },
     });
 
+    await this.audit.log(userId, AuditAction.RESPONSE_REJECTED, { responseId });
     return updated;
   }
 
@@ -168,6 +182,12 @@ export class ResponsesService {
     await this.prisma.review.update({
       where: { id: response.reviewId },
       data: { responseStatus: ReviewResponseStatus.PUBLISHED },
+    });
+
+    await this.audit.log(userId, AuditAction.RESPONSE_PUBLISHED, {
+      responseId,
+      reviewId: response.reviewId,
+      googleReviewId: review.googleReviewId,
     });
 
     return updated;
