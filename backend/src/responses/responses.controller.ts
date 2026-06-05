@@ -8,6 +8,7 @@ import {
   Body,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { ResponsesService } from './responses.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { PaginationDto } from '../common/dto/pagination.dto';
@@ -37,6 +38,7 @@ export class ResponsesController {
   }
 
   @Post('generate/:reviewId')
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @ApiOperation({ summary: 'Gerar resposta com IA para uma avaliacao' })
   generate(
     @Param('reviewId') reviewId: string,

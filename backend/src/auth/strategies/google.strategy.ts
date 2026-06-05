@@ -26,7 +26,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
 
   async validate(
     accessToken: string,
-    refreshToken: string,
+    refreshToken: string | undefined,
     profile: { id: string; emails: { value: string }[]; displayName: string },
     done: VerifyCallback,
   ): Promise<void> {
@@ -35,7 +35,9 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       email: profile.emails[0].value,
       name: profile.displayName,
       accessToken,
-      refreshToken,
+      refreshToken: refreshToken ?? undefined,
+      // expiresIn não é exposto diretamente pelo passport-google-oauth20;
+      // será tratado com fallback de 3600s em auth.service.ts
     };
 
     const user = await this.authService.validateGoogleUser(googleProfile);

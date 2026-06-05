@@ -1,13 +1,21 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
 import { GoogleService } from '../google/google.service';
 import { BusinessesService } from '../businesses/businesses.service';
-import { Response, ResponseStatus, ReviewResponseStatus } from '@prisma/client';
+import { Response, ResponseStatus, ReviewResponseStatus, AutomationMode } from '@prisma/client';
 import { PaginationDto, PaginatedResponseDto } from '../common/dto/pagination.dto';
 
 @Injectable()
 export class ResponsesService {
+  private readonly logger = new Logger(ResponsesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly aiService: AiService,
@@ -15,33 +23,29 @@ export class ResponsesService {
     private readonly businessesService: BusinessesService,
   ) {}
 
+  // ─── Generate ────────────────────────────────────────────────────────────────
+
   async generateResponse(reviewId: string, userId: string): Promise<Response> {
     const review = await this.prisma.review.findUnique({
       where: { id: reviewId },
       include: { business: true },
     });
 
-    if (!review) {
-      throw new NotFoundException('Avaliacao nao encontrada');
-    }
-
-    // Verify ownership
-    if (review.business.userId !== userId) {
-      throw new ForbiddenException('Acesso negado');
-    }
+    if (!review) throw new NotFoundException('Avaliação não encontrada');
+    if (review.business.userId !== userId) throw new ForbiddenException('Acesso negado');
 
     const generatedText = await this.aiService.generateReviewResponse({
       businessName: review.business.name,
-      businessSegment: review.business.segment || '',
-      businessCity: review.business.city || '',
+      businessSegment: review.business.segment ?? '',
+      businessCity: review.business.city ?? '',
       businessServices: review.business.mainServices,
-      toneOfVoice: review.business.toneOfVoice || 'profissional e amigavel',
+      toneOfVoice: review.business.toneOfVoice ?? 'profissional e amigável',
       keywords: review.business.keywords,
       avoidTerms: review.business.avoidTerms,
-      responseTemplate: review.business.responseTemplate || undefined,
+      responseTemplate: review.business.responseTemplate ?? undefined,
       reviewerName: review.reviewerName,
       rating: review.rating,
-      comment: review.comment || '',
+      comment: review.comment ?? '',
     });
 
     const response = await this.prisma.response.create({
@@ -57,35 +61,57 @@ export class ResponsesService {
       data: { responseStatus: ReviewResponseStatus.GENERATED },
     });
 
-    // If AUTO mode, approve and publish immediately
-    if (review.business.automationMode === 'AUTO') {
+    const mode = review.business.automationMode;
+
+    // AUTO: gera, aprova e publica automaticamente para todas as notas
+    if (mode === AutomationMode.AUTO) {
+      this.logger.log(`[AUTO] Publicando resposta automaticamente — review ${reviewId}`);
       return this.approveAndPublish(response.id, userId);
+    }
+
+    // SEMI_AUTO: publica automaticamente somente para avaliações positivas (4-5 estrelas)
+    // Avaliações negativas (1-3 estrelas) permanecem como DRAFT para revisão manual
+    if (mode === AutomationMode.SEMI_AUTO && review.rating >= 4) {
+      this.logger.log(
+        `[SEMI_AUTO] Nota ${review.rating}★ — publicando automaticamente — review ${reviewId}`,
+      );
+      return this.approveAndPublish(response.id, userId);
+    }
+
+    if (mode === AutomationMode.SEMI_AUTO && review.rating < 4) {
+      this.logger.log(
+        `[SEMI_AUTO] Nota ${review.rating}★ — aguardando revisão manual — review ${reviewId}`,
+      );
     }
 
     return response;
   }
 
+  // ─── Approve ─────────────────────────────────────────────────────────────────
+
   async approve(responseId: string, userId: string, publishedText?: string): Promise<Response> {
     const response = await this.getResponseWithOwnershipCheck(responseId, userId);
 
     if (response.status !== ResponseStatus.DRAFT) {
-      throw new BadRequestException('Resposta ja foi processada');
+      throw new BadRequestException('Resposta já foi processada');
     }
 
     return this.prisma.response.update({
       where: { id: responseId },
       data: {
         status: ResponseStatus.APPROVED,
-        publishedText: publishedText || response.generatedText,
+        publishedText: publishedText ?? response.generatedText,
       },
     });
   }
+
+  // ─── Reject ──────────────────────────────────────────────────────────────────
 
   async reject(responseId: string, userId: string): Promise<Response> {
     const response = await this.getResponseWithOwnershipCheck(responseId, userId);
 
     if (response.status !== ResponseStatus.DRAFT) {
-      throw new BadRequestException('Resposta ja foi processada');
+      throw new BadRequestException('Resposta já foi processada');
     }
 
     const updated = await this.prisma.response.update({
@@ -101,6 +127,8 @@ export class ResponsesService {
     return updated;
   }
 
+  // ─── Publish ─────────────────────────────────────────────────────────────────
+
   async publish(responseId: string, userId: string): Promise<Response> {
     const response = await this.getResponseWithOwnershipCheck(responseId, userId);
 
@@ -113,11 +141,13 @@ export class ResponsesService {
       include: { business: true },
     });
 
-    if (!review || !review.googleReviewId || !review.business.googleProfileId) {
-      throw new BadRequestException('Avaliacao sem dados do Google para publicar');
+    if (!review?.googleReviewId || !review.business.googleProfileId) {
+      throw new BadRequestException(
+        'Avaliação sem dados do Google para publicar. Verifique se o perfil Google está vinculado.',
+      );
     }
 
-    const textToPublish = response.publishedText || response.generatedText;
+    const textToPublish = response.publishedText ?? response.generatedText;
 
     await this.googleService.postReply(
       userId,
@@ -148,20 +178,16 @@ export class ResponsesService {
     return this.publish(responseId, userId);
   }
 
+  // ─── Queries ─────────────────────────────────────────────────────────────────
+
   async findByReview(reviewId: string, userId: string): Promise<Response[]> {
-    // Ownership check via review
     const review = await this.prisma.review.findUnique({
       where: { id: reviewId },
       include: { business: true },
     });
 
-    if (!review) {
-      throw new NotFoundException('Avaliacao nao encontrada');
-    }
-
-    if (review.business.userId !== userId) {
-      throw new ForbiddenException('Acesso negado');
-    }
+    if (!review) throw new NotFoundException('Avaliação não encontrada');
+    if (review.business.userId !== userId) throw new ForbiddenException('Acesso negado');
 
     return this.prisma.response.findMany({
       where: { reviewId },
@@ -169,20 +195,15 @@ export class ResponsesService {
     });
   }
 
+  /**
+   * Lista todas as respostas do usuário usando JOIN direto — evita N+1.
+   */
   async findAll(userId: string, pagination: PaginationDto): Promise<PaginatedResponseDto<Response>> {
-    const businesses = await this.prisma.business.findMany({
-      where: { userId },
-      select: { id: true },
-    });
-    const businessIds = businesses.map((b) => b.id);
-
-    const reviews = await this.prisma.review.findMany({
-      where: { businessId: { in: businessIds } },
-      select: { id: true },
-    });
-    const reviewIds = reviews.map((r) => r.id);
-
-    const where = { reviewId: { in: reviewIds } };
+    const where = {
+      review: {
+        business: { userId },
+      },
+    };
 
     const [data, total] = await Promise.all([
       this.prisma.response.findMany({
@@ -204,29 +225,28 @@ export class ResponsesService {
     return new PaginatedResponseDto(
       data,
       total,
-      pagination.page || 1,
-      pagination.limit || 20,
+      pagination.page ?? 1,
+      pagination.limit ?? 20,
     );
   }
 
-  private async getResponseWithOwnershipCheck(responseId: string, userId: string): Promise<Response> {
+  // ─── Private ─────────────────────────────────────────────────────────────────
+
+  private async getResponseWithOwnershipCheck(
+    responseId: string,
+    userId: string,
+  ): Promise<Response> {
     const response = await this.prisma.response.findUnique({
       where: { id: responseId },
       include: {
-        review: {
-          include: { business: true },
-        },
+        review: { include: { business: true } },
       },
     });
 
-    if (!response) {
-      throw new NotFoundException('Resposta nao encontrada');
-    }
+    if (!response) throw new NotFoundException('Resposta não encontrada');
 
-    const review = (response as any).review;
-    if (review.business.userId !== userId) {
-      throw new ForbiddenException('Acesso negado');
-    }
+    const review = (response as Response & { review: { business: { userId: string } } }).review;
+    if (review.business.userId !== userId) throw new ForbiddenException('Acesso negado');
 
     return response;
   }

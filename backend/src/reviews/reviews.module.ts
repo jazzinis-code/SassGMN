@@ -10,6 +10,15 @@ import { GoogleModule } from '../google/google.module';
   imports: [
     BullModule.registerQueue({
       name: 'reviews-sync',
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 5000, // 5s, 10s, 20s
+        },
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
     }),
     BusinessesModule,
     GoogleModule,

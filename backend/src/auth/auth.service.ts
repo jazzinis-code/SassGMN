@@ -8,7 +8,8 @@ export interface GoogleProfile {
   email: string;
   name: string;
   accessToken: string;
-  refreshToken: string;
+  refreshToken?: string;
+  expiresIn?: number;
 }
 
 export interface JwtPayload {
@@ -43,7 +44,19 @@ export class AuthService {
       }
     }
 
-    await this.saveGoogleTokens(user.id, profile.accessToken, profile.refreshToken);
+    // Só salva/atualiza tokens se um refreshToken válido foi recebido.
+    // O Google só envia refreshToken na primeira autorização (prompt: consent).
+    if (profile.refreshToken) {
+      await this.saveGoogleTokens(
+        user.id,
+        profile.accessToken,
+        profile.refreshToken,
+        profile.expiresIn,
+      );
+    } else {
+      // Re-login: atualiza apenas o accessToken, preserva o refreshToken existente
+      await this.updateAccessToken(user.id, profile.accessToken, profile.expiresIn);
+    }
 
     return user;
   }
@@ -61,8 +74,10 @@ export class AuthService {
     userId: string,
     accessToken: string,
     refreshToken: string,
+    expiresIn?: number,
   ) {
-    const expiresAt = new Date(Date.now() + 3600 * 1000); // 1 hour from now
+    // Usa expiresIn real retornado pelo Google (em segundos), com fallback de 1h
+    const expiresAt = new Date(Date.now() + (expiresIn ?? 3600) * 1000);
 
     const existingToken = await this.prisma.googleToken.findFirst({
       where: { userId },
@@ -78,5 +93,25 @@ export class AuthService {
         data: { userId, accessToken, refreshToken, expiresAt },
       });
     }
+  }
+
+  private async updateAccessToken(
+    userId: string,
+    accessToken: string,
+    expiresIn?: number,
+  ) {
+    const expiresAt = new Date(Date.now() + (expiresIn ?? 3600) * 1000);
+
+    const existingToken = await this.prisma.googleToken.findFirst({
+      where: { userId },
+    });
+
+    if (existingToken) {
+      await this.prisma.googleToken.update({
+        where: { id: existingToken.id },
+        data: { accessToken, expiresAt },
+      });
+    }
+    // Se não existe token nenhum, aguarda próximo login com prompt: consent
   }
 }
