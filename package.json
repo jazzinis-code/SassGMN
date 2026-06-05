@@ -1,0 +1,21 @@
+{
+  "name": "google-reviews-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sistema de gerenciamento e resposta automatizada de avaliações do Google",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev:backend": "npm run start:dev --workspace=backend",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "build:backend": "npm run build --workspace=backend",
+    "build:frontend": "npm run build --workspace=frontend",
+    "test:backend": "npm test --workspace=backend",
+    "test:frontend": "npm test --workspace=frontend"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
