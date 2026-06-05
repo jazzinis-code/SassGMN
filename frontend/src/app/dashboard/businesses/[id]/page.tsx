@@ -4,12 +4,13 @@ import React from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useBusiness, useUpdateBusiness, useDeleteBusiness } from '@/hooks/useBusinesses';
 import { BusinessForm } from '@/components/businesses/BusinessForm';
+import { GoogleProfilePicker } from '@/components/businesses/GoogleProfilePicker';
 import { Button } from '@/components/ui/Button';
 import { Toggle } from '@/components/ui/Toggle';
 import { Card, CardContent, CardHeader } from '@/components/ui/Card';
 import { Spinner } from '@/components/ui/Spinner';
 import { Modal } from '@/components/ui/Modal';
-import { ArrowLeft, Trash2 } from 'lucide-react';
+import { ArrowLeft, Trash2, MapPin } from 'lucide-react';
 import type { CreateBusinessDto } from '@/types';
 
 export default function BusinessDetailPage() {
@@ -100,6 +101,23 @@ export default function BusinessDetailPage() {
         onSubmit={handleSubmit}
         isLoading={updateMutation.isPending}
       />
+
+      {/* Card de vinculação do Google Business Profile */}
+      <Card>
+        <CardHeader className="flex flex-row items-center gap-2">
+          <MapPin className="w-4 h-4 text-gray-500" />
+          <h3 className="text-base font-semibold text-gray-900">
+            Google Business Profile
+          </h3>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-gray-500 mb-4">
+            Vincule um perfil do Google Business para sincronizar avaliações e
+            publicar respostas diretamente no Google.
+          </p>
+          <GoogleProfilePicker business={business} />
+        </CardContent>
+      </Card>
 
       <Modal
         isOpen={showDeleteModal}
