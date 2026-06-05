@@ -1,0 +1,15 @@
+# Diretório reservado para os certificados TLS (fullchain.pem + privkey.pem).
+# Os certificados NÃO devem ser versionados no git.
+# 
+# Para gerar com Let's Encrypt (Certbot):
+#   docker run --rm -v $(pwd)/nginx/ssl:/etc/letsencrypt \
+#     -v $(pwd)/nginx/certbot:/var/www/certbot \
+#     certbot/certbot certonly --webroot \
+#     -w /var/www/certbot \
+#     -d app.seudominio.com \
+#     -d api.seudominio.com \
+#     --email seu@email.com --agree-tos --non-interactive
+#
+# Após gerar, copie:
+#   cp /etc/letsencrypt/live/seudominio.com/fullchain.pem nginx/ssl/
+#   cp /etc/letsencrypt/live/seudominio.com/privkey.pem   nginx/ssl/

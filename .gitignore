@@ -39,5 +39,10 @@ backend/prisma/*.db
 # Docker
 docker-data/
 
+# Certificados TLS (nunca versionar chaves privadas)
+nginx/ssl/*.pem
+nginx/ssl/*.crt
+nginx/ssl/*.key
+
 # Misc
 *.tsbuildinfo
