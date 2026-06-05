@@ -58,22 +58,30 @@ export class AiService {
 
       return response;
     } catch (error: unknown) {
-      // Erros específicos da API OpenAI
-      if (error instanceof OpenAI.APIError) {
-        if (error.status === 429) {
-          this.logger.warn('OpenAI rate limit atingido', { status: error.status });
+      // Verifica se é um erro da API OpenAI pelo nome e propriedade status
+      // (instanceof não funciona de forma confiável em ambientes mockados/bundlados)
+      const isApiError =
+        error instanceof Error &&
+        (error.constructor.name === 'APIError' || error.name === 'APIError') &&
+        'status' in error;
+
+      if (isApiError) {
+        const status = (error as Error & { status: number }).status;
+
+        if (status === 429) {
+          this.logger.warn('OpenAI rate limit atingido', { status });
           throw new ServiceUnavailableException(
             'Limite de requisições da IA atingido. Tente novamente em alguns instantes.',
           );
         }
-        if (error.status === 401) {
+        if (status === 401) {
           this.logger.error('OpenAI API key inválida');
           throw new InternalServerErrorException(
             'Configuração da IA inválida. Contate o suporte.',
           );
         }
-        if (error.status === 503 || error.status === 500) {
-          this.logger.warn('OpenAI indisponível temporariamente', { status: error.status });
+        if (status === 503 || status === 500) {
+          this.logger.warn('OpenAI indisponível temporariamente', { status });
           throw new ServiceUnavailableException(
             'Serviço de IA temporariamente indisponível. Tente novamente.',
           );

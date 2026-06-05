@@ -114,7 +114,8 @@ export class ResponsesService {
       },
     });
 
-    await this.audit.log(userId, AuditAction.RESPONSE_APPROVED, { responseId });
+    // fire-and-forget — falha de auditoria não interrompe o fluxo
+    void this.audit.log(userId, AuditAction.RESPONSE_APPROVED, { responseId });
     return updated;
   }
 
@@ -137,7 +138,7 @@ export class ResponsesService {
       data: { responseStatus: ReviewResponseStatus.REJECTED },
     });
 
-    await this.audit.log(userId, AuditAction.RESPONSE_REJECTED, { responseId });
+    void this.audit.log(userId, AuditAction.RESPONSE_REJECTED, { responseId });
     return updated;
   }
 
@@ -184,7 +185,7 @@ export class ResponsesService {
       data: { responseStatus: ReviewResponseStatus.PUBLISHED },
     });
 
-    await this.audit.log(userId, AuditAction.RESPONSE_PUBLISHED, {
+    void this.audit.log(userId, AuditAction.RESPONSE_PUBLISHED, {
       responseId,
       reviewId: response.reviewId,
       googleReviewId: review.googleReviewId,
