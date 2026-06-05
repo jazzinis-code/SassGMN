@@ -7,7 +7,8 @@ import { Textarea } from '@/components/ui/Textarea';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader } from '@/components/ui/Card';
 import { AutomationToggle } from './AutomationToggle';
-import type { Business, CreateBusinessDto, AutomationMode } from '@/types';
+import { AutomationMode } from '@/types';
+import type { Business, CreateBusinessDto } from '@/types';
 
 interface BusinessFormProps {
   business?: Business;
@@ -42,7 +43,7 @@ export function BusinessForm({ business, onSubmit, isLoading }: BusinessFormProp
     defaultResolutionMessage: business?.defaultResolutionMessage || '',
     avoidTerms: business?.avoidTerms || [],
     responseTemplate: business?.responseTemplate || '',
-    automationMode: business?.automationMode || 'MANUAL',
+    automationMode: business?.automationMode || AutomationMode.MANUAL,
   });
 
   const [keywordsInput, setKeywordsInput] = useState(

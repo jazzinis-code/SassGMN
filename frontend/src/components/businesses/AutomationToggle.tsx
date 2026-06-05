@@ -3,28 +3,28 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
 import { Hand, Zap, Bot } from 'lucide-react';
-import type { AutomationMode } from '@/types';
+import { AutomationMode } from '@/types';
 
 interface AutomationToggleProps {
   value: AutomationMode;
   onChange: (mode: AutomationMode) => void;
 }
 
-const modes = [
+const modes: { value: AutomationMode; label: string; description: string; icon: React.ElementType }[] = [
   {
-    value: 'MANUAL' as const,
+    value: AutomationMode.MANUAL,
     label: 'Manual',
     description: 'Revisar e aprovar todas as respostas antes de publicar',
     icon: Hand,
   },
   {
-    value: 'SEMI_AUTO' as const,
+    value: AutomationMode.SEMI_AUTO,
     label: 'Semi-automatico',
     description: 'Gerar respostas automaticamente, mas aguardar aprovacao para publicar',
     icon: Zap,
   },
   {
-    value: 'AUTO' as const,
+    value: AutomationMode.AUTO,
     label: 'Automatico',
     description: 'Gerar e publicar respostas automaticamente sem revisao',
     icon: Bot,
