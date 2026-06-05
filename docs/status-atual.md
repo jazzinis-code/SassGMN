@@ -1,147 +1,179 @@
 # Status Atual do Projeto — SassGMN (ReviewAI)
 
-> Documento gerado em: Junho 2026  
-> Finalidade: Mapeamento técnico completo do estado atual da aplicação para guiar as próximas fases de desenvolvimento.
+> Última atualização: Junho 2026 — Fase 2 concluída
+> Finalidade: Referência técnica do estado atual para onboarding, planejamento e continuidade.
 
 ---
 
 ## 1. Arquitetura Atual
 
-O projeto é uma aplicação **SaaS para gerenciamento e resposta automatizada de avaliações do Google Business Profile**, utilizando IA para gerar respostas personalizadas por empresa.
+Aplicação **SaaS** para gerenciamento e resposta automatizada de avaliações do Google Business Profile com IA.
 
-### Topologia
+### Topologia de Produção
 
 ```
-Browser (Next.js :3000) ──HTTP/REST──▶ NestJS API (:3001)
-                                              │
-                  ┌───────────────────────────┼──────────────────────┐
-                  ▼                           ▼                      ▼
-          PostgreSQL :5432            Redis :6379            APIs Externas
-          (Prisma ORM)               (Bull Queues)     Google Business + OpenAI
+Internet
+   │
+   ▼
+nginx (:80/:443)  ─── TLS 1.2/1.3, rate limit, headers segurança
+   ├──▶ frontend (Next.js :3000)   — App Router, SSR/RSC
+   └──▶ backend  (NestJS  :3001)   — REST API, Swagger /api/docs
+              │
+   ┌──────────┼─────────────────────────────────┐
+   ▼          ▼                                 ▼
+PostgreSQL  Redis :6379                  APIs Externas
+:5432       (Bull queues)         Google Business + OpenAI + Sentry
 ```
 
 ### Padrão Arquitetural
 
-- **Frontend:** Next.js 14 App Router, desacoplado, consome API REST via Axios
-- **Backend:** NestJS com arquitetura modular (um módulo por domínio)
-- **Comunicação:** REST com envelope padronizado `{ data, statusCode, timestamp }`
-- **Autenticação:** Google OAuth 2.0 (frontend via NextAuth + backend via Passport)
-- **Filas:** Bull + Redis para processamento assíncrono de sincronização de avaliações
-- **Infra:** Docker Compose sobe apenas PostgreSQL e Redis (sem containers de aplicação)
+| Camada | Padrão |
+|---|---|
+| Frontend | Next.js App Router, React Server Components, TanStack Query |
+| Backend | NestJS modular (1 módulo por domínio), global guards/filters/interceptors |
+| Comunicação | REST, envelope `{ data, statusCode, timestamp }` |
+| Autenticação | Google OAuth → backend emite JWT → frontend armazena em localStorage |
+| Filas | Bull + Redis, retry exponencial (3x: 5s → 10s → 20s) |
+| Agendamento | @nestjs/schedule com CRON a cada 6h (America/Sao_Paulo) |
+| Monitoramento | Sentry (backend: 5xx, frontend: React + browser) |
 
-### Fluxo Principal
+### Módulos do Backend
 
-```
-1. Login via Google OAuth 2.0
-2. Sincronização de avaliações do Google Business Profile (via fila Bull)
-3. Geração de resposta personalizada via GPT-4
-4. Aprovação manual ou automática (conforme modo configurado)
-5. Publicação da resposta diretamente no perfil do Google
-```
+| Módulo | Responsabilidade |
+|---|---|
+| `AuthModule` | OAuth Google, emissão JWT, estratégias Passport |
+| `UsersModule` | Perfil do usuário, audit log endpoint |
+| `BusinessesModule` | CRUD de empresas, vinculação Google Profile |
+| `ReviewsModule` | Listagem, sync Bull, CRON scheduler |
+| `ResponsesModule` | Generate/approve/reject/publish, modos de automação |
+| `AiModule` | Integração OpenAI, prompt engineering |
+| `GoogleModule` | Google Business Profile API, token refresh |
+| `DashboardModule` | Métricas reais — 12 queries paralelas |
+| `AuditModule` | Log de ações (@Global — injetável em qualquer módulo) |
 
 ---
 
 ## 2. Funcionalidades Implementadas
 
-### Autenticação e Usuários
-- [x] Login exclusivo via Google OAuth 2.0
-- [x] JWT gerado pelo backend após autenticação OAuth
-- [x] Refresh automático de tokens Google expirados
-- [x] Sessão persistente via NextAuth (30 dias)
-- [x] Proteção de rotas via middleware (frontend) e JwtAuthGuard (backend)
-- [x] Decorators `@Public()` e `@CurrentUser()` no backend
+### Autenticação e Segurança
+- [x] Login via Google OAuth 2.0 com refresh automático de tokens
+- [x] JWT backend + sessão NextAuth frontend (30 dias)
+- [x] `validateEnv()` no bootstrap — falha rápida se var obrigatória ausente
+- [x] `helmet()` + CORS configurado no NestJS
+- [x] Rate limiting global via `@nestjs/throttler` (100 req/60s por IP)
+- [x] Rate limiting específico no endpoint de IA (10 req/60s)
+- [x] `compression()` para respostas gzip
+- [x] Proteção de rotas: middleware frontend + JwtAuthGuard backend
+- [x] Nginx com TLS 1.2/1.3, headers de segurança, rate limiting por zona
 
 ### Gestão de Empresas
-- [x] CRUD completo (criar, listar, editar, deletar)
-- [x] Personalização por empresa: tom de voz, palavras-chave, termos a evitar, template de resposta, WhatsApp, serviços, segmento, cidade
+- [x] CRUD completo com verificação de ownership
+- [x] Personalização completa: tom de voz, keywords, termos a evitar, template, WhatsApp, serviços
 - [x] Três modos de automação: MANUAL, SEMI_AUTO, AUTO
-- [x] Soft delete via campo `isActive`
-- [x] Verificação de propriedade em todas as operações (`ForbiddenException`)
+- [x] **Tela guiada de vinculação do Google Business Profile** (modal com lista de perfis, 3 estados)
+- [x] `POST /businesses/:id/connect-google` com auditoria
 
 ### Avaliações (Reviews)
-- [x] Sincronização assíncrona de avaliações via fila Bull + Redis
+- [x] Sincronização assíncrona via fila Bull + Redis
+- [x] **CRON automático a cada 6h** (America/Sao_Paulo, configurável via env)
 - [x] Deduplicação por `googleReviewId`
-- [x] Listagem paginada com filtros (empresa, rating mín/máx, status, nome do avaliador)
-- [x] Atualização manual de status da avaliação
+- [x] Retry exponencial na fila (3 tentativas: 5s → 10s → 20s)
+- [x] Deduplicação de jobs na fila (evita sync duplo)
+- [x] Listagem paginada com filtros (empresa, rating, status, nome)
 
-### Respostas com IA (Responses)
-- [x] Geração de respostas via GPT-4 com prompt engineering completo por nota (1★ a 5★)
-- [x] Fluxo completo: DRAFT → APPROVED → PUBLISHED
-- [x] Edição manual da resposta antes de publicar
-- [x] Rejeição com reversão de status
-- [x] Publicação direta no Google Business Profile via API
-- [x] Modo AUTO: gera + aprova + publica automaticamente
-- [x] Histórico paginado de todas as respostas
+### Respostas com IA
+- [x] Geração via GPT-4 com prompt engineering por nota (1★–5★)
+- [x] Contexto completo da empresa no prompt (nome, segmento, cidade, serviços, tom de voz)
+- [x] Fluxo: DRAFT → APPROVED → PUBLISHED
+- [x] **Modo SEMI_AUTO implementado**: nota ≥ 4★ → auto-publica; nota < 4★ → revisão manual
+- [x] Modo AUTO: gera + aprova + publica para qualquer nota
+- [x] Error handling tipado da OpenAI (429/401/503 → exceções específicas)
+- [x] Publicação REST direto via `auth.request()` (Google Business API v4)
+- [x] Histórico paginado via JOIN direto (sem N+1)
 
-### Google Business Profile
-- [x] Listagem de perfis/locais vinculados
-- [x] Armazenamento de tokens OAuth no banco (access + refresh)
+### Dashboard e Métricas
+- [x] **Endpoint `/dashboard/stats` com 12 queries paralelas**:
+  - Totais: reviews, businesses, responses
+  - Por status: pending, generated, published, rejected
+  - Médias: rating médio, tempo médio de resposta (horas)
+  - Distribuição de notas 1–5★ (groupBy)
+  - Últimos 7 dias: novos reviews + publicações
+- [x] Frontend dashboard reescrito com 8 StatsCards + barra de distribuição de notas
 
-### Frontend / Dashboard
-- [x] Dashboard com métricas (total de reviews, pendentes, publicadas, empresas)
-- [x] Design system próprio com 14 componentes base (Button, Badge, Card, Input, Select, Modal, Spinner, StarRating, etc.)
-- [x] Toggle visual de modo de automação
-- [x] Editor de resposta com suporte a regeneração
-- [x] Filtros e paginação na listagem de avaliações
+### Logs de Auditoria
+- [x] `AuditService` global com 11 `AuditAction`s
+- [x] `log()` best-effort — nunca interrompe o fluxo principal (void fire-and-forget)
+- [x] Instrumentado em: login, register, business CRUD, sync, generate, approve, reject, publish, connect-google
+- [x] Endpoint `GET /users/audit-log?limit=50` para consulta pelo usuário
 
-### Infraestrutura e API
-- [x] Swagger disponível em `/api/docs` com BearerAuth
-- [x] Global exception filter com padronização de erros `{ statusCode, timestamp, path, message }`
-- [x] Response transform interceptor `{ data, statusCode, timestamp }`
-- [x] Configuração tipada em 6 namespaces: `app`, `database`, `google`, `jwt`, `openai`, `redis`
-- [x] Docker Compose para PostgreSQL 15 e Redis 7 com healthchecks
+### Monitoramento (Sentry)
+- [x] Backend `@sentry/node`: reporta erros 5xx, ignora 4xx esperados
+- [x] Frontend `@sentry/nextjs`: client/server/edge configs, Session Replay
+- [x] `global-error.tsx` captura erros de renderização React
+- [x] `instrumentation.ts` integra com Next.js runtime hooks
+- [x] Condicional — no-op se `SENTRY_DSN` não configurado
+
+### Infraestrutura
+- [x] **Dockerfiles multi-stage** para backend (Node 20, usuário não-root) e frontend (standalone)
+- [x] **docker-compose.prod.yml** com migrate job, healthchecks, depends_on
+- [x] **nginx.conf** com TLS 1.2/1.3, redirect HTTP→HTTPS, rate limiting por zona, cache de assets
+- [x] `nginx/generate-certs-dev.sh` para certificados autoassinados de desenvolvimento
+- [x] Certificados gitignored (`.pem`, `.crt`, `.key`)
+
+### Testes
+- [x] **67 testes passando, 0 falhas**, 3 suítes:
+  - `ai.service.spec.ts`: 28 testes — constructor, geração, por nota, erros HTTP OpenAI
+  - `responses.service.spec.ts`: 33 testes — generate/approve/reject/publish, SEMI_AUTO, AUTO
+  - `audit.service.spec.ts`: 6 testes — log, best-effort, findByUser
 
 ---
 
 ## 3. Funcionalidades Pendentes
 
-### Prioridade Alta — Bloqueiam uso em produção
+### Prioridade Alta
 
 | # | Funcionalidade | Observação |
 |---|---|---|
-| 1 | **Modo SEMI_AUTO** | Definido no schema e na UI, mas a lógica condicional não existe no `ResponsesService` — comporta-se igual ao MANUAL |
-| 2 | **AuditLog** | Tabela e model existem no banco, nenhuma ação é registrada em qualquer service |
-| 3 | **Testes automatizados** | Jest configurado, scripts no `package.json`, zero arquivos `.spec.ts` em todo o projeto |
-| 4 | **Dockerfiles de aplicação** | Docker Compose sobe apenas infra — não é possível containerizar os apps para produção |
-| 5 | **Rate limiting na API** | Endpoint `/responses/generate` pode ser chamado ilimitadamente, gerando custo descontrolado na OpenAI |
+| 1 | **HTTPS em produção** | nginx configurado, mas depende de certificados reais (Let's Encrypt ou comprado) |
+| 2 | **Criptografia dos tokens OAuth** | `google_tokens` armazena access/refresh em texto puro no banco |
+| 3 | **Testes de integração** | Somente testes unitários — sem testes E2E ou de integração |
+| 4 | **Fila `responses` sem processor** | Registrada no módulo, sem implementação do `@Process` |
 
-### Prioridade Média — Limitam o produto
-
-| # | Funcionalidade |
-|---|---|
-| 6 | Sincronização automática periódica via CRON (`ScheduleModule` importado sem nenhum `@Cron`) |
-| 7 | Endpoint `/google/connect/:businessId` documentado no README mas não implementado |
-| 8 | Lógica de planos (FREE/PRO/ENTERPRISE definidos no schema, sem regras de negócio) |
-| 9 | Processor da fila `responses` (registrada no módulo, sem implementação) |
-| 10 | Endpoint de stats reais para o dashboard (métricas calculadas no backend) |
-| 11 | Criptografia dos tokens OAuth armazenados no banco |
-
-### Prioridade Baixa — Melhorias de produto
+### Prioridade Média
 
 | # | Funcionalidade |
 |---|---|
-| 12 | Notificações (UI de settings existe, sem backend) |
-| 13 | Deleção de conta (botão na UI, sem ação real) |
-| 14 | Export de dados (CSV / relatórios) |
-| 15 | Webhooks do Google para avaliações em tempo real |
-| 16 | Analytics com gráficos (rating médio, tempo de resposta, volume por período) |
+| 5 | Lógica de planos (FREE/PRO/ENTERPRISE definidos, sem regras de negócio) |
+| 6 | Notificações por email/WhatsApp para reviews negativos |
+| 7 | Deleção de conta (botão na UI, sem ação real no backend) |
+| 8 | Endpoint `/dashboard/stats` com cache Redis (evitar 12 queries a cada acesso) |
+
+### Prioridade Baixa
+
+| # | Funcionalidade |
+|---|---|
+| 9 | Export de dados (CSV / PDF) |
+| 10 | Webhooks Google para avaliações em tempo real |
+| 11 | Analytics com gráficos históricos (recharts/chart.js) |
+| 12 | Suporte a múltiplos idiomas nas respostas IA |
+| 13 | Migrar Bull v4 para BullMQ (mais moderno) |
 
 ---
 
 ## 4. Banco de Dados
 
-**SGBD:** PostgreSQL 15 · **ORM:** Prisma 5.8 · **Migrations:** 1 migration inicial (`20240101000000_init`)
+**PostgreSQL 15** via **Prisma 5.8** · 1 migration inicial (`20240101000000_init`)
 
 ### Modelos
 
 | Model | Tabela | Descrição |
 |---|---|---|
 | `User` | `users` | Usuário autenticado (email único, plano, googleId) |
-| `Business` | `businesses` | Empresa/perfil com configurações de personalização de IA |
-| `Review` | `reviews` | Avaliação do Google (nota 1-5, comentário, status de resposta) |
-| `Response` | `responses` | Resposta gerada pela IA (texto gerado, publicado, status, data de publicação) |
-| `GoogleToken` | `google_tokens` | Tokens OAuth do Google por usuário (access + refresh) |
-| `AuditLog` | `audit_logs` | Log de ações — **schema existe, nunca é gravado** |
+| `Business` | `businesses` | Empresa com configurações de personalização da IA |
+| `Review` | `reviews` | Avaliação Google (nota 1-5, comentário, status) |
+| `Response` | `responses` | Resposta IA (texto gerado, publicado, status, publishedAt) |
+| `GoogleToken` | `google_tokens` | Tokens OAuth Google por usuário (texto puro — ver pendência #2) |
+| `AuditLog` | `audit_logs` | Log de ações com JSON serializado em `details` |
 
 ### Enums
 
@@ -158,9 +190,8 @@ Browser (Next.js :3000) ──HTTP/REST──▶ NestJS API (:3001)
 User 1──N Business 1──N Review 1──N Response
 User 1──N GoogleToken
 User 1──N AuditLog
+(todas as FKs com onDelete: Cascade)
 ```
-
-Todas as FKs com `onDelete: Cascade`.
 
 ---
 
@@ -172,125 +203,133 @@ Todas as FKs com `onDelete: Cascade`.
 |---|---|---|
 | `mybusinessaccountmanagement` | v1 | Listar contas Google Business |
 | `mybusinessbusinessinformation` | v1 | Listar locais/perfis |
-| `mybusiness` (**legado**) | **v4** ⚠️ | Buscar avaliações + publicar respostas |
-| Google OAuth 2.0 | — | Autenticação de usuários + permissão `business.manage` |
+| Google Business Reviews (REST direto) | v4 | Buscar avaliações + publicar respostas via `auth.request()` |
+| Google OAuth 2.0 | — | Autenticação + escopo `business.manage` |
 
-> ⚠️ **Atenção crítica:** A API `mybusiness v4` está **deprecada pelo Google**. O código atual usa `(google as any)` para contornar a falta de suporte no SDK oficial, indicando risco de quebra iminente.
+> **Nota:** A API de reviews v4 não está disponível no googleapis bundle — o código usa `auth.request()` com chamadas REST diretas para `mybusiness.googleapis.com/v4`. Isso funciona mas pode precisar de atualização quando o Google migrar para v1 Reviews.
 
 ### OpenAI API
 
 | Parâmetro | Valor |
 |---|---|
-| SDK | openai v4.24 |
+| SDK | `openai` v4.24 |
 | Endpoint | Chat Completions |
-| Modelo padrão | `gpt-4` (configurável via env `OPENAI_MODEL`) |
+| Modelo padrão | `gpt-4` (configurável via `OPENAI_MODEL`) |
 | Temperature | `0.8` |
 | Max tokens | `500` |
-| Prompt | Sistema completo com contexto da empresa + regras por nota (1★–5★) |
+| Error handling | 429 → `ServiceUnavailableException`; 401 → `InternalServerErrorException`; 503 → `ServiceUnavailableException` |
 
-### Endpoints da API Interna (NestJS)
+### Endpoints Internos
 
-| Método | Rota | Descrição |
-|---|---|---|
-| GET | `/auth/google` | Inicia OAuth Google |
-| GET | `/auth/google/callback` | Callback OAuth → emite JWT → redireciona |
-| GET | `/auth/me` | Usuário autenticado |
-| GET | `/users/me` | Perfil do usuário |
-| PATCH | `/users/me` | Atualizar nome |
-| POST | `/businesses` | Criar empresa |
-| GET | `/businesses` | Listar empresas (paginado) |
-| GET | `/businesses/:id` | Detalhe da empresa |
-| PATCH | `/businesses/:id` | Atualizar empresa |
-| DELETE | `/businesses/:id` | Remover empresa |
-| GET | `/reviews` | Listar avaliações (filtros + paginação) |
-| GET | `/reviews/:id` | Detalhe da avaliação |
-| POST | `/reviews/sync/:businessId` | Enfileirar sync de avaliações do Google |
-| PATCH | `/reviews/:id/status` | Atualizar status da avaliação |
-| GET | `/responses` | Histórico de respostas (paginado) |
-| GET | `/responses/review/:reviewId` | Respostas de uma avaliação |
-| POST | `/responses/generate/:reviewId` | Gerar resposta com IA |
-| PATCH | `/responses/:id/approve` | Aprovar resposta |
-| PATCH | `/responses/:id/reject` | Rejeitar resposta |
-| POST | `/responses/:id/publish` | Publicar no Google |
-| GET | `/google/profiles` | Listar perfis Google Business |
+| Método | Rota | Auth | Rate Limit |
+|---|---|---|---|
+| GET | `/auth/google` | Public | — |
+| GET | `/auth/google/callback` | Public | — |
+| GET | `/auth/me` | JWT | 100/60s |
+| GET | `/users/me` | JWT | 100/60s |
+| PATCH | `/users/me` | JWT | 100/60s |
+| GET | `/users/audit-log` | JWT | 100/60s |
+| POST | `/businesses` | JWT | 100/60s |
+| GET | `/businesses` | JWT | 100/60s |
+| GET | `/businesses/:id` | JWT | 100/60s |
+| PATCH | `/businesses/:id` | JWT | 100/60s |
+| DELETE | `/businesses/:id` | JWT | 100/60s |
+| POST | `/businesses/:id/connect-google` | JWT | 100/60s |
+| GET | `/reviews` | JWT | 100/60s |
+| GET | `/reviews/:id` | JWT | 100/60s |
+| POST | `/reviews/sync/:businessId` | JWT | 100/60s |
+| PATCH | `/reviews/:id/status` | JWT | 100/60s |
+| GET | `/responses` | JWT | 100/60s |
+| GET | `/responses/review/:reviewId` | JWT | 100/60s |
+| POST | `/responses/generate/:reviewId` | JWT | **10/60s** |
+| PATCH | `/responses/:id/approve` | JWT | 100/60s |
+| PATCH | `/responses/:id/reject` | JWT | 100/60s |
+| POST | `/responses/:id/publish` | JWT | 100/60s |
+| GET | `/google/profiles` | JWT | 100/60s |
+| GET | `/dashboard/stats` | JWT | 100/60s |
 
 ---
 
 ## 6. Riscos Identificados
 
-### Riscos Críticos
+### Riscos Ativos (ainda existem)
 
-| Risco | Impacto | Probabilidade |
+| Risco | Impacto | Mitigação Atual |
 |---|---|---|
-| API Google Business v4 deprecada | Quebra total de sync e publicação sem aviso | **Alta** |
-| Sem rate limiting no endpoint de IA | Fatura OpenAI irrestrita em produção | **Alta** |
-| Zero testes automatizados | Regressões invisíveis a cada mudança | **Alta** |
-| JWT secret com fallback hardcoded | Comprometimento de todas as sessões sem `.env` | **Média** |
-| Sem HTTPS configurado | Tokens JWT expostos em tráfego de rede | **Alta** em produção |
+| Tokens OAuth em texto puro no banco | Alto — vazamento se banco comprometido | Nenhuma — pendência #2 |
+| API Google Reviews v4 (REST direto) | Médio — pode ser descontinuada | Uso de `auth.request()` é resiliente |
+| Sem testes de integração | Médio — regressões em fluxos E2E | 67 testes unitários cobrem lógica de negócio |
+| Fila `responses` sem processor | Baixo — registrada mas não usada | Não impacta fluxo atual |
 
-### Riscos Médios
+### Riscos Resolvidos na Fase 1 e Fase 2
 
-| Risco | Impacto |
+| Risco | Como foi resolvido |
 |---|---|
-| Tokens OAuth armazenados em texto puro no banco | Vazamento total se o banco for comprometido |
-| Dupla autenticação OAuth independente (NextAuth + Passport) | Confusão de tokens, complexidade de debug |
-| Query N+1 em `ResponsesService.findAll()` | Degradação de performance em escala |
-| Fila Bull sem configuração de retry/backoff | Falhas silenciosas na sincronização |
-| Sem monitoramento de erros (Sentry/similar) | Erros em produção invisíveis |
-
-### Riscos Baixos
-
-| Risco |
-|---|
-| `ScheduleModule` importado sem uso — overhead desnecessário |
-| Bull v4 legado em vez de BullMQ moderno |
-| Sem `helmet` nem `compression` no bootstrap do NestJS |
-| `getSession()` chamado a cada requisição Axios no frontend |
+| JWT secret hardcoded | `validateEnv()` no bootstrap, sem fallback |
+| Sem rate limiting | `@nestjs/throttler` global + específico em `/generate` |
+| Sem headers de segurança | `helmet()` + nginx headers |
+| API Google SDK deprecada | Migrado para `auth.request()` REST direto |
+| SEMI_AUTO não funcionava | Implementado: nota ≥ 4★ auto-publica |
+| AuditLog nunca gravado | 11 pontos de instrumentação, best-effort |
+| Sem monitoramento | Sentry backend (5xx) + frontend (React + browser) |
+| Sem testes | 67 testes unitários cobrindo os serviços críticos |
+| Sem Dockerfiles | Multi-stage para backend e frontend + docker-compose.prod.yml |
+| Sem HTTPS configurado | nginx com TLS 1.2/1.3 + geração de certs de desenvolvimento |
+| CRON ausente | `ReviewsSchedulerService` a cada 6h, deduplicação de jobs |
+| Dashboard com dados falsos | `GET /dashboard/stats` com 12 queries paralelas |
+| Sem vinculação guiada Google | `GoogleProfilePicker` + `POST /businesses/:id/connect-google` |
+| N+1 em `ResponsesService.findAll` | JOIN direto via Prisma nested `where` |
+| `getSession()` a cada request | `localStorage` token com interceptor síncrono |
+| Página `/auth/callback` inexistente | Criada com `Suspense` boundary correto |
 
 ---
 
-## 7. Próximas Fases de Desenvolvimento
+## 7. Fases de Desenvolvimento
 
-### Fase 1 — Estabilização e Segurança
-*Pré-requisito para qualquer deploy em produção.*
+### Fase 1 — Estabilização ✅ Concluída
 
-- [ ] Migrar API Google de v4 legada para `mybusinessreviews v1`
-- [ ] Implementar lógica do modo SEMI_AUTO em `ResponsesService`
-- [ ] Instalar `@nestjs/throttler` e limitar endpoint de geração de IA
-- [ ] Remover JWT secret hardcoded; validar variáveis de ambiente obrigatórias no bootstrap
-- [ ] Criar Dockerfiles otimizados para backend e frontend
-- [ ] Adicionar `helmet` e `compression` no `main.ts`
+Commits: `55feea5` → `8fa34f2`
 
-### Fase 2 — Funcionalidades Críticas Faltantes
-*Completa o produto conforme documentado no README.*
+- [x] Migrar Google Business API de v4 SDK para REST direto
+- [x] Implementar SEMI_AUTO em `ResponsesService`
+- [x] Rate limiting com `@nestjs/throttler`
+- [x] JWT secret sem fallback, `validateEnv()` no bootstrap
+- [x] Helmet + compression no `main.ts`
+- [x] Página `/auth/callback` criada
+- [x] `api.ts` com localStorage token (remove `getSession()` assíncrono)
+- [x] Correção de tipos TypeScript (`AutomationMode` enum, `next-auth.d.ts`)
 
-- [ ] Implementar gravação de AuditLog nas ações: login, generate, approve, reject, publish
-- [ ] Criar CRON de sincronização automática de avaliações a cada 6h
-- [ ] Implementar endpoint `/google/connect/:businessId` para vinculação guiada
-- [ ] Criar endpoint `/dashboard/stats` com métricas reais calculadas no banco
-- [ ] Criptografar tokens OAuth armazenados em `google_tokens`
-- [ ] Implementar processor da fila `responses`
+### Fase 2 — Produção ✅ Concluída
 
-### Fase 3 — Qualidade e Observabilidade
-*Sustentabilidade técnica do projeto.*
+Commits: `78a43a6` → `92f32be`
 
-- [ ] Escrever testes unitários para `AiService`, `ResponsesService`, `AuthService`
-- [ ] Escrever testes de integração para os fluxos OAuth e geração/publicação
-- [ ] Integrar Sentry para rastreamento de erros em produção
-- [ ] Configurar logger estruturado (Winston ou Pino)
-- [ ] Corrigir N+1 em `ResponsesService.findAll()` com JOIN direto no Prisma
-- [ ] Configurar retry com backoff exponencial nas filas Bull
+- [x] **Etapa 1**: Dockerfiles multi-stage + `docker-compose.prod.yml`
+- [x] **Etapa 2**: nginx com TLS 1.2/1.3, HTTPS, rate limiting, headers
+- [x] **Etapa 3**: `ReviewsSchedulerService` com CRON a cada 6h
+- [x] **Etapa 4**: `AuditModule` global, 11 AuditActions, 11 pontos instrumentados
+- [x] **Etapa 5**: `GET /dashboard/stats` com 12 queries paralelas + dashboard frontend
+- [x] **Etapa 6**: `GoogleProfilePicker` modal + `POST /businesses/:id/connect-google`
+- [x] **Etapa 7**: 67 testes unitários (AiService 28, ResponsesService 33, AuditService 6)
+- [x] **Etapa 8**: Sentry backend (@sentry/node) + frontend (@sentry/nextjs)
+
+### Fase 3 — Qualidade Avançada (Próxima)
+
+- [ ] Criptografar tokens OAuth no banco (`google_tokens`)
+- [ ] Cache Redis para `/dashboard/stats` (TTL 5 min)
+- [ ] Testes de integração (fluxo OAuth E2E, sync Bull)
+- [ ] Processor da fila `responses`
+- [ ] Logger estruturado (Winston com JSON)
+- [ ] Métricas de performance (Prometheus/Grafana)
 
 ### Fase 4 — Evolução de Produto
-*Diferenciação e crescimento.*
 
-- [ ] Implementar lógica de planos (limites por tier FREE/PRO/ENTERPRISE)
-- [ ] Notificações por email/WhatsApp para reviews negativos
-- [ ] Dashboard de analytics com gráficos (rating médio, volume, tempo de resposta)
-- [ ] Export de relatórios em CSV/PDF
-- [ ] Webhooks do Google para receber novas avaliações em tempo real
-- [ ] Suporte a múltiplos idiomas nas respostas geradas pela IA
+- [ ] Lógica de planos (FREE/PRO/ENTERPRISE com limites)
+- [ ] Notificações email/WhatsApp para reviews negativos
+- [ ] Analytics com gráficos históricos
+- [ ] Export CSV/PDF de relatórios
+- [ ] Webhooks Google para avaliações em tempo real
+- [ ] Multi-idioma nas respostas IA
 
 ---
 
-*Última atualização: Junho 2026*
+*Última atualização: Junho 2026 — Fase 2 concluída*
