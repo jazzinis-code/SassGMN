@@ -145,7 +145,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
           <RecentReviews
-            reviews={reviewsData?.data ?? []}
+            reviews={Array.isArray(reviewsData?.data) ? reviewsData.data : []}
             isLoading={reviewsLoading}
           />
         </div>
