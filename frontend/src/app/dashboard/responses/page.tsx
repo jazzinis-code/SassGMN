@@ -49,7 +49,7 @@ export default function ResponsesPage() {
         <div className="py-12">
           <Spinner size="lg" />
         </div>
-      ) : !data || data.data.length === 0 ? (
+      ) : !data || !Array.isArray(data.data) || data.data.length === 0 ? (
         <EmptyState
           icon={<History className="w-8 h-8 text-gray-400" />}
           title="Nenhuma resposta encontrada"
@@ -69,7 +69,7 @@ export default function ResponsesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.data.map((response) => (
+              {(Array.isArray(data.data) ? data.data : []).map((response) => (
                 <TableRow key={response.id}>
                   <TableCell>
                     <span className="text-sm font-medium">

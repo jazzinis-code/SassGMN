@@ -29,7 +29,7 @@ export function ReviewList({
     );
   }
 
-  if (!data || data.data.length === 0) {
+  if (!data || !Array.isArray(data.data) || data.data.length === 0) {
     return (
       <EmptyState
         icon={<MessageSquare className="w-8 h-8 text-gray-400" />}
@@ -42,7 +42,7 @@ export function ReviewList({
   return (
     <div>
       <div className="space-y-3">
-        {data.data.map((review) => (
+        {(Array.isArray(data.data) ? data.data : []).map((review) => (
           <ReviewCard key={review.id} review={review} />
         ))}
       </div>

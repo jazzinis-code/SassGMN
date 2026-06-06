@@ -32,7 +32,7 @@ export default function BusinessesPage() {
         <div className="py-12">
           <Spinner size="lg" />
         </div>
-      ) : !data || data.data.length === 0 ? (
+      ) : !data || !Array.isArray(data.data) || data.data.length === 0 ? (
         <EmptyState
           icon={<Building2 className="w-8 h-8 text-gray-400" />}
           title="Nenhuma empresa cadastrada"
@@ -43,7 +43,7 @@ export default function BusinessesPage() {
       ) : (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {data.data.map((business) => (
+            {(Array.isArray(data.data) ? data.data : []).map((business) => (
               <BusinessCard key={business.id} business={business} />
             ))}
           </div>
