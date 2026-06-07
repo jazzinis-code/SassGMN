@@ -1,18 +1,15 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { getToken } from 'next-auth/jwt';
 
 export async function middleware(request: NextRequest) {
-  const token = await getToken({
-    req: request,
-    secret: process.env.NEXTAUTH_SECRET,
-  });
-
   const { pathname } = request.nextUrl;
+
+  // Verifica o token JWT do backend (salvo como cookie após o callback OAuth)
+  const apiToken = request.cookies.get('api_token')?.value;
 
   // Protect dashboard routes
   if (pathname.startsWith('/dashboard')) {
-    if (!token) {
+    if (!apiToken) {
       const url = new URL('/', request.url);
       url.searchParams.set('callbackUrl', pathname);
       return NextResponse.redirect(url);
@@ -20,7 +17,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // Redirect authenticated users from login page to dashboard
-  if (pathname === '/' && token) {
+  if (pathname === '/' && apiToken) {
     return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 

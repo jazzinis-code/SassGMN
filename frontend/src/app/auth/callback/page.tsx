@@ -24,6 +24,9 @@ function CallbackHandler() {
     // Persiste o JWT do backend para uso nas chamadas da API
     localStorage.setItem('api_token', token);
 
+    // Salva também como cookie para o middleware conseguir verificar
+    document.cookie = `api_token=${token}; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax`;
+
     router.replace('/dashboard');
   }, [router, searchParams]);
 
