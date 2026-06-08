@@ -43,10 +43,18 @@ interface MyBusinessReview {
  */
 const MY_BUSINESS_API_BASE = 'https://mybusiness.googleapis.com/v4';
 
+/** Cache em memória para perfis Google Business (evita estourar quota) */
+interface ProfileCache {
+  profiles: GoogleBusinessProfile[];
+  expiresAt: number;
+}
+
 @Injectable()
 export class GoogleService {
   private readonly logger = new Logger(GoogleService.name);
   private readonly oauth2Client: OAuth2Client;
+  private readonly profilesCache = new Map<string, ProfileCache>();
+  private readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
 
   constructor(
     private readonly configService: ConfigService,
@@ -125,6 +133,13 @@ export class GoogleService {
    * como métodos tipados — igual ao padrão já adotado em fetchReviews.
    */
   async listBusinessProfiles(userId: string): Promise<GoogleBusinessProfile[]> {
+    // Retorna do cache se ainda válido
+    const cached = this.profilesCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) {
+      this.logger.log(`Cache hit: perfis Google para userId=${userId}`);
+      return cached.profiles;
+    }
+
     const auth = await this.getAuthenticatedClient(userId);
 
     try {
@@ -174,6 +189,13 @@ export class GoogleService {
       }
 
       this.logger.log(`Total de perfis encontrados: ${profiles.length}`);
+
+      // Salva no cache
+      this.profilesCache.set(userId, {
+        profiles,
+        expiresAt: Date.now() + this.CACHE_TTL_MS,
+      });
+
       return profiles;
 
     } catch (error: any) {
