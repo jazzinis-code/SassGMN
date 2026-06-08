@@ -76,12 +76,18 @@ export class GoogleService {
 
     this.oauth2Client.setCredentials({
       access_token: token.accessToken,
-      refresh_token: token.refreshToken,
+      refresh_token: token.refreshToken ?? undefined,
       expiry_date: token.expiresAt.getTime(),
     });
 
-    // Renova automaticamente se expirado
+    // Renova automaticamente se expirado e se há refreshToken disponível
     if (token.expiresAt.getTime() < Date.now()) {
+      if (!token.refreshToken) {
+        throw new UnauthorizedException(
+          'Sessão expirada. Faça login novamente para renovar o acesso.',
+        );
+      }
+
       try {
         const { credentials } = await this.oauth2Client.refreshAccessToken();
 
@@ -117,34 +123,94 @@ export class GoogleService {
       const accountsResponse = await accountMgmt.accounts.list();
       const accounts = accountsResponse.data.accounts ?? [];
 
+      if (accounts.length === 0) {
+        this.logger.warn(`Nenhuma conta Google Business encontrada para userId=${userId}`);
+        return [];
+      }
+
       const profiles: GoogleBusinessProfile[] = [];
 
       for (const account of accounts) {
         if (!account.name) continue;
 
-        // Lista locais via mybusinessbusinessinformation v1
-        const bizInfo = google.mybusinessbusinessinformation({ version: 'v1', auth });
-        const locationsResponse = await bizInfo.accounts.locations.list({
-          parent: account.name,
-          readMask: 'name,title',
-        });
+        try {
+          // Lista locais via mybusinessbusinessinformation v1
+          const bizInfo = google.mybusinessbusinessinformation({ version: 'v1', auth });
+          const locationsResponse = await bizInfo.accounts.locations.list({
+            parent: account.name,
+            readMask: 'name,title',
+          });
 
-        for (const location of locationsResponse.data.locations ?? []) {
-          if (location.name && location.title) {
-            profiles.push({
-              name: location.name,
-              title: location.title,
-              locationId: location.name.split('/').pop() ?? '',
-            });
+          for (const location of locationsResponse.data.locations ?? []) {
+            if (location.name && location.title) {
+              profiles.push({
+                name: location.name,
+                title: location.title,
+                locationId: location.name.split('/').pop() ?? '',
+              });
+            }
           }
+        } catch (locErr: any) {
+          // Se uma conta falhar, continua as outras
+          this.logger.warn(
+            `Erro ao listar locais da conta ${account.name}: ${locErr?.message}`,
+          );
         }
       }
 
       return profiles;
-    } catch (error) {
-      this.logger.error('Erro ao listar perfis do Google Business', error);
+    } catch (error: any) {
+      const status = error?.response?.status ?? error?.code;
+      const message = error?.response?.data?.error?.message ?? error?.message ?? 'Erro desconhecido';
+
+      this.logger.error(
+        `Erro ao listar perfis Google Business (userId=${userId}) — HTTP ${status}: ${message}`,
+        error,
+      );
+
+      // Repassa erros estruturados para o controller tratar
+      if (status === 403) {
+        throw Object.assign(
+          new Error('Permissão negada. Verifique se a API Google Business Profile está habilitada no Google Cloud Console e se a conta tem acesso.'),
+          { statusCode: 403, googleApiError: true },
+        );
+      }
+
+      if (status === 401) {
+        throw new UnauthorizedException(
+          'Token do Google expirado. Faça login novamente.',
+        );
+      }
+
       throw error;
     }
+  }
+
+  /**
+   * Verifica se o usuário tem token Google válido e retorna seu status.
+   * Útil para diagnóstico no frontend antes de abrir o picker.
+   */
+  async getTokenStatus(userId: string): Promise<{
+    hasToken: boolean;
+    hasRefreshToken: boolean;
+    isExpired: boolean;
+    expiresAt?: string;
+  }> {
+    const token = await this.prisma.googleToken.findFirst({
+      where: { userId },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    if (!token) {
+      return { hasToken: false, hasRefreshToken: false, isExpired: true };
+    }
+
+    return {
+      hasToken: true,
+      hasRefreshToken: !!token.refreshToken,
+      isExpired: token.expiresAt.getTime() < Date.now(),
+      expiresAt: token.expiresAt.toISOString(),
+    };
   }
 
   // ─── Reviews ─────────────────────────────────────────────────────────────────
