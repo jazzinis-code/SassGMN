@@ -1,16 +1,13 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { getToken } from 'next-auth/jwt';
 
-export async function middleware(request: NextRequest) {
-  const token = await getToken({
-    req: request,
-    secret: process.env.NEXTAUTH_SECRET,
-  });
-
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Protect dashboard routes
+  // Lê o token do cookie salvo no callback OAuth
+  const token = request.cookies.get('api_token')?.value;
+
+  // Protege rotas do dashboard
   if (pathname.startsWith('/dashboard')) {
     if (!token) {
       const url = new URL('/', request.url);
@@ -19,7 +16,7 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // Redirect authenticated users from login page to dashboard
+  // Redireciona usuário autenticado da página de login para o dashboard
   if (pathname === '/' && token) {
     return NextResponse.redirect(new URL('/dashboard', request.url));
   }
