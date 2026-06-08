@@ -31,10 +31,11 @@ export function useSyncReviews() {
   return useMutation({
     mutationFn: async (businessId: string) => {
       const { data } = await api.post(`/reviews/sync/${businessId}`);
-      return data;
+      return data.data ?? data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['reviews'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
     },
   });
 }

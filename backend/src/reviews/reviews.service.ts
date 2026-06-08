@@ -87,30 +87,46 @@ export class ReviewsService {
     return review;
   }
 
-  async syncFromGoogle(businessId: string, userId: string): Promise<{ message: string }> {
+  async syncFromGoogle(
+    businessId: string,
+    userId: string,
+  ): Promise<{ message: string; created: number; updated: number; total: number }> {
     const business = await this.businessesService.findById(businessId, userId);
 
     if (!business.googleProfileId) {
-      throw new NotFoundException('Empresa sem perfil do Google vinculado');
+      throw new NotFoundException('Empresa sem perfil do Google vinculado. Vincule um perfil antes de sincronizar.');
     }
-
-    await this.syncQueue.add('sync-reviews', {
-      businessId: business.id,
-      userId,
-      googleProfileId: business.googleProfileId,
-    });
 
     await this.audit.log(userId, AuditAction.REVIEWS_SYNC_REQUESTED, {
       businessId: business.id,
     });
 
-    return { message: 'Sincronização iniciada. As avaliações serão atualizadas em breve.' };
+    // Executa direto (sem fila) para retornar resultado imediato ao usuário
+    const result = await this.processSyncJob(
+      business.id,
+      userId,
+      business.googleProfileId,
+    );
+
+    return {
+      message: `Sincronização concluída: ${result.created} nova(s), ${result.updated} atualizada(s) de ${result.total} avaliação(ões).`,
+      ...result,
+    };
   }
 
-  async processSyncJob(businessId: string, userId: string, googleProfileId: string): Promise<void> {
+  async processSyncJob(
+    businessId: string,
+    userId: string,
+    googleProfileId: string,
+  ): Promise<{ created: number; updated: number; total: number }> {
     const reviews = await this.googleService.fetchReviews(userId, googleProfileId);
 
+    let created = 0;
+    let updated = 0;
+
     for (const review of reviews) {
+      if (!review.reviewId) continue;
+
       const existingReview = await this.prisma.review.findUnique({
         where: { googleReviewId: review.reviewId },
       });
@@ -127,8 +143,30 @@ export class ReviewsService {
             responseStatus: ReviewResponseStatus.PENDING,
           },
         });
+        created++;
+      } else {
+        // Atualiza dados que podem ter mudado no Google
+        await this.prisma.review.update({
+          where: { id: existingReview.id },
+          data: {
+            reviewerName: review.reviewerName,
+            rating: review.rating,
+            comment: review.comment || null,
+            reviewDate: new Date(review.createTime),
+          },
+        });
+        updated++;
       }
     }
+
+    await this.audit.log(userId, AuditAction.REVIEWS_SYNC_COMPLETED, {
+      businessId,
+      created,
+      updated,
+      total: reviews.length,
+    });
+
+    return { created, updated, total: reviews.length };
   }
 
   async updateStatus(id: string, userId: string, status: string): Promise<Review> {
