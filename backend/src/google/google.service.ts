@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { PrismaService } from '../common/prisma/prisma.service';
-
 export interface GoogleReview {
   reviewId: string;
   reviewerName: string;
@@ -114,34 +113,49 @@ export class GoogleService {
 
   // ─── Google Business Profile ─────────────────────────────────────────────────
 
+  /**
+   * Lista todos os perfis Google Business do usuário via REST direto.
+   *
+   * APIs usadas:
+   *  - Business Account Management v1: https://mybusinessaccountmanagement.googleapis.com/v1/accounts
+   *  - Business Information v1: https://mybusinessbusinessinformation.googleapis.com/v1/{account}/locations
+   *
+   * Usamos REST direto (auth.request) porque o googleapis bundle @130
+   * não expõe mybusinessaccountmanagement nem mybusinessbusinessinformation
+   * como métodos tipados — igual ao padrão já adotado em fetchReviews.
+   */
   async listBusinessProfiles(userId: string): Promise<GoogleBusinessProfile[]> {
     const auth = await this.getAuthenticatedClient(userId);
 
     try {
-      // Lista contas via mybusinessaccountmanagement v1
-      const accountMgmt = google.mybusinessaccountmanagement({ version: 'v1', auth });
-      const accountsResponse = await accountMgmt.accounts.list();
-      const accounts = accountsResponse.data.accounts ?? [];
+      // 1. Listar contas Google Business
+      const accountsRes = await auth.request<{ accounts?: Array<{ name: string; accountName: string }> }>({
+        url: 'https://mybusinessaccountmanagement.googleapis.com/v1/accounts',
+      });
+
+      const accounts = accountsRes.data.accounts ?? [];
 
       if (accounts.length === 0) {
         this.logger.warn(`Nenhuma conta Google Business encontrada para userId=${userId}`);
         return [];
       }
 
+      this.logger.log(`Encontradas ${accounts.length} conta(s) Google Business para userId=${userId}`);
+
       const profiles: GoogleBusinessProfile[] = [];
 
+      // 2. Para cada conta, listar os locais (locations)
       for (const account of accounts) {
         if (!account.name) continue;
 
         try {
-          // Lista locais via mybusinessbusinessinformation v1
-          const bizInfo = google.mybusinessbusinessinformation({ version: 'v1', auth });
-          const locationsResponse = await bizInfo.accounts.locations.list({
-            parent: account.name,
-            readMask: 'name,title',
+          const locRes = await auth.request<{
+            locations?: Array<{ name: string; title: string }>;
+          }>({
+            url: `https://mybusinessbusinessinformation.googleapis.com/v1/${account.name}/locations?readMask=name,title`,
           });
 
-          for (const location of locationsResponse.data.locations ?? []) {
+          for (const location of locRes.data.locations ?? []) {
             if (location.name && location.title) {
               profiles.push({
                 name: location.name,
@@ -151,27 +165,30 @@ export class GoogleService {
             }
           }
         } catch (locErr: any) {
-          // Se uma conta falhar, continua as outras
+          const locStatus = locErr?.response?.status;
+          const locMsg = locErr?.response?.data?.error?.message ?? locErr?.message;
           this.logger.warn(
-            `Erro ao listar locais da conta ${account.name}: ${locErr?.message}`,
+            `Erro ao listar locais da conta ${account.name} (HTTP ${locStatus}): ${locMsg}`,
           );
         }
       }
 
+      this.logger.log(`Total de perfis encontrados: ${profiles.length}`);
       return profiles;
+
     } catch (error: any) {
       const status = error?.response?.status ?? error?.code;
       const message = error?.response?.data?.error?.message ?? error?.message ?? 'Erro desconhecido';
 
       this.logger.error(
         `Erro ao listar perfis Google Business (userId=${userId}) — HTTP ${status}: ${message}`,
-        error,
       );
 
-      // Repassa erros estruturados para o controller tratar
       if (status === 403) {
         throw Object.assign(
-          new Error('Permissão negada. Verifique se a API Google Business Profile está habilitada no Google Cloud Console e se a conta tem acesso.'),
+          new Error(
+            `Permissão negada (403): ${message}. Verifique se as APIs "Business Profile API" e "My Business Account Management API" estão habilitadas no Google Cloud Console.`,
+          ),
           { statusCode: 403, googleApiError: true },
         );
       }
