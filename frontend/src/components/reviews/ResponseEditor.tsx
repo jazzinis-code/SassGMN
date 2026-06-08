@@ -1,62 +1,56 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Textarea } from '@/components/ui/Textarea';
-import { Button } from '@/components/ui/Button';
-import { Sparkles } from 'lucide-react';
 
 interface ResponseEditorProps {
+  /** Texto inicial que popula o editor (ex: generatedText ou publishedText) */
   initialText: string;
-  onSave: (text: string) => void;
-  onRegenerate: () => void;
-  isRegenerating?: boolean;
-  isSaving?: boolean;
+  /** Chamado sempre que o texto muda — permite o pai rastrear edições locais */
+  onChange?: (text: string) => void;
+  /** Quando true, o campo é somente leitura (ex: status PUBLISHED) */
+  readOnly?: boolean;
 }
 
 export function ResponseEditor({
   initialText,
-  onSave,
-  onRegenerate,
-  isRegenerating = false,
-  isSaving = false,
+  onChange,
+  readOnly = false,
 }: ResponseEditorProps) {
   const [text, setText] = useState(initialText);
 
+  // Sincroniza quando a prop muda (ex: após regenerar)
+  useEffect(() => {
+    setText(initialText);
+  }, [initialText]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setText(val);
+    onChange?.(val);
+  };
+
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <label className="text-sm font-medium text-gray-700">
-          Resposta gerada
-        </label>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onRegenerate}
-          isLoading={isRegenerating}
-          leftIcon={<Sparkles className="w-4 h-4" />}
-        >
-          Regenerar
-        </Button>
-      </div>
+    <div className="space-y-1">
+      <label className="text-sm font-medium text-gray-700">
+        {readOnly ? 'Resposta publicada' : 'Resposta gerada'}
+      </label>
       <Textarea
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={handleChange}
+        readOnly={readOnly}
         rows={6}
         autoResize
-        showCount
+        showCount={!readOnly}
         maxLength={2000}
-        placeholder="A resposta gerada pela IA aparecera aqui..."
+        placeholder="A resposta gerada pela IA aparecerá aqui..."
+        className={readOnly ? 'bg-gray-50 text-gray-600 cursor-default' : ''}
       />
-      <div className="flex justify-end">
-        <Button
-          onClick={() => onSave(text)}
-          isLoading={isSaving}
-          disabled={!text.trim()}
-          size="sm"
-        >
-          Salvar alteracoes
-        </Button>
-      </div>
+      {!readOnly && (
+        <p className="text-xs text-gray-400">
+          Edite o texto acima se necessário antes de aprovar.
+        </p>
+      )}
     </div>
   );
 }
