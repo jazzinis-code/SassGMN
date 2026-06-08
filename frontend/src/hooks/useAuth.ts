@@ -7,7 +7,11 @@ import { User } from '@/types';
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // Começa false se não há token (evita spinner na tela de login)
+  const [isLoading, setIsLoading] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return !!localStorage.getItem('api_token');
+  });
   const router = useRouter();
 
   const fetchUser = useCallback(async () => {
