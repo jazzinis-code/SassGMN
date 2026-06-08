@@ -59,11 +59,9 @@ export function useGoogleProfiles(enabled = true) {
     },
     enabled,
     staleTime: 5 * 60 * 1000,
-    retry: false,
-    meta: {
-      // armazena o tipo de erro para uso no componente
-      onError: undefined,
-    },
+    // Espera 15s antes de tentar novamente (evita estourar quota)
+    retryDelay: 15_000,
+    retry: 1,
   });
 }
 

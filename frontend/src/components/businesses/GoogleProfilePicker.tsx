@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
@@ -16,6 +16,34 @@ import type { Business } from '@/types';
 
 interface GoogleProfilePickerProps {
   business: Business;
+}
+
+/** Botão de retry com cooldown para evitar estourar quota da API */
+function RetryButton({ onRetry }: { onRetry: () => void }) {
+  const [cooldown, setCooldown] = useState(0);
+
+  const handleClick = useCallback(() => {
+    onRetry();
+    setCooldown(15);
+  }, [onRetry]);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
+
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      leftIcon={<RefreshCw className="w-4 h-4" />}
+      onClick={handleClick}
+      disabled={cooldown > 0}
+    >
+      {cooldown > 0 ? `Aguarde ${cooldown}s...` : 'Tentar novamente'}
+    </Button>
+  );
 }
 
 /** Mensagens e ações por tipo de erro */
@@ -94,9 +122,7 @@ function ErrorState({
             <li>Faça login novamente após habilitar</li>
           </ol>
         </div>
-        <Button variant="secondary" size="sm" leftIcon={<RefreshCw className="w-4 h-4" />} onClick={onRetry}>
-          Tentar novamente
-        </Button>
+        <RetryButton onRetry={onRetry} />
       </div>
     );
   }
@@ -111,9 +137,7 @@ function ErrorState({
           {error?.response?.data?.message ?? 'Ocorreu um erro inesperado. Tente novamente.'}
         </p>
       </div>
-      <Button variant="secondary" size="sm" leftIcon={<RefreshCw className="w-4 h-4" />} onClick={onRetry}>
-        Tentar novamente
-      </Button>
+      <RetryButton onRetry={onRetry} />
     </div>
   );
 }
