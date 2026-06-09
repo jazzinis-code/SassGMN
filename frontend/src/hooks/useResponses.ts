@@ -22,11 +22,12 @@ export function useGenerateResponse() {
   return useMutation({
     mutationFn: async (reviewId: string) => {
       const { data } = await api.post(`/responses/generate/${reviewId}`);
-      return data;
+      return data.data ?? data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['responses'] });
+    onSuccess: (_data, reviewId) => {
+      queryClient.invalidateQueries({ queryKey: ['reviews', reviewId] });
       queryClient.invalidateQueries({ queryKey: ['reviews'] });
+      queryClient.invalidateQueries({ queryKey: ['responses'] });
     },
   });
 }
@@ -37,11 +38,11 @@ export function useApproveResponse() {
   return useMutation({
     mutationFn: async ({ id, publishedText }: { id: string; publishedText?: string }) => {
       const { data } = await api.patch(`/responses/${id}/approve`, { publishedText });
-      return data;
+      return data.data ?? data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['responses'] });
       queryClient.invalidateQueries({ queryKey: ['reviews'] });
+      queryClient.invalidateQueries({ queryKey: ['responses'] });
     },
   });
 }
@@ -52,11 +53,11 @@ export function useRejectResponse() {
   return useMutation({
     mutationFn: async (id: string) => {
       const { data } = await api.patch(`/responses/${id}/reject`);
-      return data;
+      return data.data ?? data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['responses'] });
       queryClient.invalidateQueries({ queryKey: ['reviews'] });
+      queryClient.invalidateQueries({ queryKey: ['responses'] });
     },
   });
 }
@@ -67,11 +68,12 @@ export function usePublishResponse() {
   return useMutation({
     mutationFn: async (id: string) => {
       const { data } = await api.post(`/responses/${id}/publish`);
-      return data;
+      return data.data ?? data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['responses'] });
       queryClient.invalidateQueries({ queryKey: ['reviews'] });
+      queryClient.invalidateQueries({ queryKey: ['responses'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
     },
   });
 }

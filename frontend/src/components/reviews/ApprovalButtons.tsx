@@ -3,90 +3,65 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
-import { Check, X, Send } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 
 interface ApprovalButtonsProps {
   onApprove: () => void;
-  onReject: () => void;
-  onPublish?: () => void;
+  onReject:  () => void;
   isApproving?: boolean;
-  isRejecting?: boolean;
-  isPublishing?: boolean;
-  showPublish?: boolean;
+  isRejecting?:  boolean;
 }
 
 export function ApprovalButtons({
   onApprove,
   onReject,
-  onPublish,
   isApproving = false,
   isRejecting = false,
-  isPublishing = false,
-  showPublish = false,
 }: ApprovalButtonsProps) {
-  const [confirmAction, setConfirmAction] = useState<'approve' | 'reject' | 'publish' | null>(null);
+  const [confirmAction, setConfirmAction] = useState<'approve' | 'reject' | null>(null);
 
   const handleConfirm = () => {
     if (confirmAction === 'approve') onApprove();
-    if (confirmAction === 'reject') onReject();
-    if (confirmAction === 'publish' && onPublish) onPublish();
+    if (confirmAction === 'reject')  onReject();
     setConfirmAction(null);
-  };
-
-  const confirmMessages = {
-    approve: 'Tem certeza que deseja aprovar esta resposta?',
-    reject: 'Tem certeza que deseja rejeitar esta resposta?',
-    publish: 'Tem certeza que deseja publicar esta resposta no Google?',
   };
 
   return (
     <>
       <div className="flex items-center gap-3">
         <Button
-          variant="primary"
           size="sm"
           onClick={() => setConfirmAction('approve')}
           isLoading={isApproving}
+          disabled={isRejecting}
           leftIcon={<Check className="w-4 h-4" />}
         >
-          Aprovar
+          Aprovar resposta
         </Button>
         <Button
           variant="danger"
           size="sm"
           onClick={() => setConfirmAction('reject')}
           isLoading={isRejecting}
+          disabled={isApproving}
           leftIcon={<X className="w-4 h-4" />}
         >
           Rejeitar
         </Button>
-        {showPublish && onPublish && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setConfirmAction('publish')}
-            isLoading={isPublishing}
-            leftIcon={<Send className="w-4 h-4" />}
-          >
-            Publicar
-          </Button>
-        )}
       </div>
 
       <Modal
         isOpen={!!confirmAction}
         onClose={() => setConfirmAction(null)}
-        title="Confirmar acao"
+        title={confirmAction === 'approve' ? 'Aprovar resposta' : 'Rejeitar resposta'}
       >
-        <p className="text-sm text-gray-600 mb-4">
-          {confirmAction && confirmMessages[confirmAction]}
+        <p className="text-sm text-gray-600 mb-6">
+          {confirmAction === 'approve'
+            ? 'Confirma a aprovação desta resposta? Após aprovada, ela ficará pronta para publicação no Google.'
+            : 'Confirma a rejeição? A resposta será descartada e você poderá regenerar uma nova.'}
         </p>
         <div className="flex justify-end gap-3">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setConfirmAction(null)}
-          >
+          <Button variant="secondary" size="sm" onClick={() => setConfirmAction(null)}>
             Cancelar
           </Button>
           <Button
@@ -94,7 +69,7 @@ export function ApprovalButtons({
             size="sm"
             onClick={handleConfirm}
           >
-            Confirmar
+            {confirmAction === 'approve' ? 'Confirmar aprovação' : 'Confirmar rejeição'}
           </Button>
         </div>
       </Modal>

@@ -21,8 +21,11 @@ function CallbackHandler() {
       return;
     }
 
-    // Persiste o JWT do backend para uso nas chamadas da API
+    // Persiste o JWT do backend para uso nas chamadas da API (Axios)
     localStorage.setItem('api_token', token);
+
+    // Salva também em cookie para que o middleware (servidor) consiga verificar
+    document.cookie = `api_token=${token}; path=/; max-age=${60 * 60 * 24 * 30}; SameSite=Lax`;
 
     router.replace('/dashboard');
   }, [router, searchParams]);

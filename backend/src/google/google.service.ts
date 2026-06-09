@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { PrismaService } from '../common/prisma/prisma.service';
-
 export interface GoogleReview {
   reviewId: string;
   reviewerName: string;
@@ -44,10 +43,18 @@ interface MyBusinessReview {
  */
 const MY_BUSINESS_API_BASE = 'https://mybusiness.googleapis.com/v4';
 
+/** Cache em memória para perfis Google Business (evita estourar quota) */
+interface ProfileCache {
+  profiles: GoogleBusinessProfile[];
+  expiresAt: number;
+}
+
 @Injectable()
 export class GoogleService {
   private readonly logger = new Logger(GoogleService.name);
   private readonly oauth2Client: OAuth2Client;
+  private readonly profilesCache = new Map<string, ProfileCache>();
+  private readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
 
   constructor(
     private readonly configService: ConfigService,
@@ -76,12 +83,18 @@ export class GoogleService {
 
     this.oauth2Client.setCredentials({
       access_token: token.accessToken,
-      refresh_token: token.refreshToken,
+      refresh_token: token.refreshToken ?? undefined,
       expiry_date: token.expiresAt.getTime(),
     });
 
-    // Renova automaticamente se expirado
+    // Renova automaticamente se expirado e se há refreshToken disponível
     if (token.expiresAt.getTime() < Date.now()) {
+      if (!token.refreshToken) {
+        throw new UnauthorizedException(
+          'Sessão expirada. Faça login novamente para renovar o acesso.',
+        );
+      }
+
       try {
         const { credentials } = await this.oauth2Client.refreshAccessToken();
 
@@ -108,43 +121,144 @@ export class GoogleService {
 
   // ─── Google Business Profile ─────────────────────────────────────────────────
 
+  /**
+   * Lista todos os perfis Google Business do usuário via REST direto.
+   *
+   * APIs usadas:
+   *  - Business Account Management v1: https://mybusinessaccountmanagement.googleapis.com/v1/accounts
+   *  - Business Information v1: https://mybusinessbusinessinformation.googleapis.com/v1/{account}/locations
+   *
+   * Usamos REST direto (auth.request) porque o googleapis bundle @130
+   * não expõe mybusinessaccountmanagement nem mybusinessbusinessinformation
+   * como métodos tipados — igual ao padrão já adotado em fetchReviews.
+   */
   async listBusinessProfiles(userId: string): Promise<GoogleBusinessProfile[]> {
+    // Retorna do cache se ainda válido
+    const cached = this.profilesCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) {
+      this.logger.log(`Cache hit: perfis Google para userId=${userId}`);
+      return cached.profiles;
+    }
+
     const auth = await this.getAuthenticatedClient(userId);
 
     try {
-      // Lista contas via mybusinessaccountmanagement v1
-      const accountMgmt = google.mybusinessaccountmanagement({ version: 'v1', auth });
-      const accountsResponse = await accountMgmt.accounts.list();
-      const accounts = accountsResponse.data.accounts ?? [];
+      // 1. Listar contas Google Business
+      const accountsRes = await auth.request<{ accounts?: Array<{ name: string; accountName: string }> }>({
+        url: 'https://mybusinessaccountmanagement.googleapis.com/v1/accounts',
+      });
+
+      const accounts = accountsRes.data.accounts ?? [];
+
+      if (accounts.length === 0) {
+        this.logger.warn(`Nenhuma conta Google Business encontrada para userId=${userId}`);
+        return [];
+      }
+
+      this.logger.log(`Encontradas ${accounts.length} conta(s) Google Business para userId=${userId}`);
 
       const profiles: GoogleBusinessProfile[] = [];
 
+      // 2. Para cada conta, listar os locais (locations)
       for (const account of accounts) {
         if (!account.name) continue;
 
-        // Lista locais via mybusinessbusinessinformation v1
-        const bizInfo = google.mybusinessbusinessinformation({ version: 'v1', auth });
-        const locationsResponse = await bizInfo.accounts.locations.list({
-          parent: account.name,
-          readMask: 'name,title',
-        });
+        try {
+          const locRes = await auth.request<{
+            locations?: Array<{ name: string; title: string }>;
+          }>({
+            url: `https://mybusinessbusinessinformation.googleapis.com/v1/${account.name}/locations?readMask=name,title`,
+          });
 
-        for (const location of locationsResponse.data.locations ?? []) {
-          if (location.name && location.title) {
-            profiles.push({
-              name: location.name,
-              title: location.title,
-              locationId: location.name.split('/').pop() ?? '',
-            });
+          for (const location of locRes.data.locations ?? []) {
+            if (location.name && location.title) {
+              profiles.push({
+                name: location.name,
+                title: location.title,
+                locationId: location.name.split('/').pop() ?? '',
+              });
+            }
           }
+        } catch (locErr: any) {
+          const locStatus = locErr?.response?.status;
+          const locMsg = locErr?.response?.data?.error?.message ?? locErr?.message;
+          this.logger.warn(
+            `Erro ao listar locais da conta ${account.name} (HTTP ${locStatus}): ${locMsg}`,
+          );
         }
       }
 
+      this.logger.log(`Total de perfis encontrados: ${profiles.length}`);
+
+      // Salva no cache
+      this.profilesCache.set(userId, {
+        profiles,
+        expiresAt: Date.now() + this.CACHE_TTL_MS,
+      });
+
       return profiles;
-    } catch (error) {
-      this.logger.error('Erro ao listar perfis do Google Business', error);
+
+    } catch (error: any) {
+      const status = error?.response?.status ?? error?.code;
+      const message = error?.response?.data?.error?.message ?? error?.message ?? 'Erro desconhecido';
+
+      this.logger.error(
+        `Erro ao listar perfis Google Business (userId=${userId}) — HTTP ${status}: ${message}`,
+      );
+
+      if (status === 429 || message.toLowerCase().includes('quota exceeded')) {
+        throw Object.assign(
+          new Error(
+            'Limite de requisições da API do Google atingido. Aguarde 1 minuto e tente novamente.',
+          ),
+          { statusCode: 429, googleApiError: true, isQuotaError: true },
+        );
+      }
+
+      if (status === 403) {
+        throw Object.assign(
+          new Error(
+            `Permissão negada (403): ${message}. Verifique se as APIs "Business Profile API" e "My Business Account Management API" estão habilitadas no Google Cloud Console.`,
+          ),
+          { statusCode: 403, googleApiError: true },
+        );
+      }
+
+      if (status === 401) {
+        throw new UnauthorizedException(
+          'Token do Google expirado. Faça login novamente.',
+        );
+      }
+
       throw error;
     }
+  }
+
+  /**
+   * Verifica se o usuário tem token Google válido e retorna seu status.
+   * Útil para diagnóstico no frontend antes de abrir o picker.
+   */
+  async getTokenStatus(userId: string): Promise<{
+    hasToken: boolean;
+    hasRefreshToken: boolean;
+    isExpired: boolean;
+    expiresAt?: string;
+  }> {
+    const token = await this.prisma.googleToken.findFirst({
+      where: { userId },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    if (!token) {
+      return { hasToken: false, hasRefreshToken: false, isExpired: true };
+    }
+
+    return {
+      hasToken: true,
+      hasRefreshToken: !!token.refreshToken,
+      isExpired: token.expiresAt.getTime() < Date.now(),
+      expiresAt: token.expiresAt.toISOString(),
+    };
   }
 
   // ─── Reviews ─────────────────────────────────────────────────────────────────

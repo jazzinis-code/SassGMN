@@ -145,6 +145,102 @@ export class DashboardService {
     };
   }
 
+  // ─── Chart data ──────────────────────────────────────────────────────────────
+
+  async getChartData(userId: string, days: number) {
+    const businesses = await this.prisma.business.findMany({
+      where: { userId },
+      select: { id: true },
+    });
+    const businessIds = businesses.map((b) => b.id);
+
+    if (businessIds.length === 0) {
+      return { dailyReviews: [], responseStatusBreakdown: [], ratingTrend: [] };
+    }
+
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    since.setHours(0, 0, 0, 0);
+
+    // Busca reviews no período para calcular séries diárias
+    const reviews = await this.prisma.review.findMany({
+      where: {
+        businessId: { in: businessIds },
+        createdAt: { gte: since },
+      },
+      select: { createdAt: true, rating: true, responseStatus: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Busca respostas publicadas no período
+    const responses = await this.prisma.response.findMany({
+      where: {
+        review: { businessId: { in: businessIds } },
+        status: 'PUBLISHED',
+        publishedAt: { gte: since },
+      },
+      select: { publishedAt: true },
+    });
+
+    // ── Série diária: reviews recebidas + respostas publicadas por dia
+    const dailyMap = new Map<string, { reviews: number; responses: number; avgRating: number; ratingSum: number }>();
+
+    // Inicializa todos os dias do período
+    for (let i = 0; i < days; i++) {
+      const d = new Date(since);
+      d.setDate(since.getDate() + i);
+      const key = d.toISOString().slice(0, 10);
+      dailyMap.set(key, { reviews: 0, responses: 0, avgRating: 0, ratingSum: 0 });
+    }
+
+    for (const r of reviews) {
+      const key = r.createdAt.toISOString().slice(0, 10);
+      const entry = dailyMap.get(key);
+      if (entry) {
+        entry.reviews++;
+        entry.ratingSum += r.rating;
+        entry.avgRating = Number((entry.ratingSum / entry.reviews).toFixed(1));
+      }
+    }
+
+    for (const r of responses) {
+      if (!r.publishedAt) continue;
+      const key = r.publishedAt.toISOString().slice(0, 10);
+      const entry = dailyMap.get(key);
+      if (entry) entry.responses++;
+    }
+
+    const dailyReviews = Array.from(dailyMap.entries()).map(([date, v]) => ({
+      date,
+      reviews: v.reviews,
+      responses: v.responses,
+      avgRating: v.reviews > 0 ? v.avgRating : null,
+    }));
+
+    // ── Breakdown de status (para gráfico de rosca)
+    const statusCounts = await this.prisma.review.groupBy({
+      by: ['responseStatus'],
+      where: { businessId: { in: businessIds } },
+      _count: { responseStatus: true },
+    });
+
+    const STATUS_LABELS: Record<string, string> = {
+      PENDING:   'Pendente',
+      GENERATED: 'Gerada',
+      APPROVED:  'Aprovada',
+      PUBLISHED: 'Publicada',
+      REJECTED:  'Rejeitada',
+    };
+
+    const responseStatusBreakdown = statusCounts.map((s) => ({
+      status: s.responseStatus,
+      label: STATUS_LABELS[s.responseStatus] ?? s.responseStatus,
+      count: s._count.responseStatus,
+    }));
+
+    return { dailyReviews, responseStatusBreakdown };
+  }
+
   private calcAverageResponseTime(
     pairs: { publishedAt: Date | null; review: { reviewDate: Date } }[],
   ): number | null {
