@@ -26,7 +26,7 @@ export class GoogleController {
           {
             statusCode: error.statusCode,
             message: error.message,
-            type: 'GOOGLE_API_ERROR',
+            type: error.isQuotaError ? 'QUOTA_EXCEEDED' : 'GOOGLE_API_ERROR',
           },
           error.statusCode,
         );

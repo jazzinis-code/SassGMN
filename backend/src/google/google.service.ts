@@ -206,6 +206,15 @@ export class GoogleService {
         `Erro ao listar perfis Google Business (userId=${userId}) — HTTP ${status}: ${message}`,
       );
 
+      if (status === 429 || message.toLowerCase().includes('quota exceeded')) {
+        throw Object.assign(
+          new Error(
+            'Limite de requisições da API do Google atingido. Aguarde 1 minuto e tente novamente.',
+          ),
+          { statusCode: 429, googleApiError: true, isQuotaError: true },
+        );
+      }
+
       if (status === 403) {
         throw Object.assign(
           new Error(

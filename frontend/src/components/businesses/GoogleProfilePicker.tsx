@@ -19,13 +19,13 @@ interface GoogleProfilePickerProps {
 }
 
 /** Botão de retry com cooldown para evitar estourar quota da API */
-function RetryButton({ onRetry }: { onRetry: () => void }) {
+function RetryButton({ onRetry, cooldownSeconds = 15 }: { onRetry: () => void; cooldownSeconds?: number }) {
   const [cooldown, setCooldown] = useState(0);
 
   const handleClick = useCallback(() => {
     onRetry();
-    setCooldown(15);
-  }, [onRetry]);
+    setCooldown(cooldownSeconds);
+  }, [onRetry, cooldownSeconds]);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -56,6 +56,21 @@ function ErrorState({
 }) {
   const type = getGoogleProfilesErrorType(error);
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+  if (type === 'QUOTA_EXCEEDED') {
+    return (
+      <div className="flex flex-col items-center gap-3 py-6 text-center">
+        <AlertCircle className="w-8 h-8 text-amber-400" />
+        <div>
+          <p className="text-sm font-medium text-gray-800">Limite de requisições atingido</p>
+          <p className="text-sm text-gray-500 mt-1">
+            A API do Google atingiu o limite por minuto. Aguarde 1 minuto e tente novamente.
+          </p>
+        </div>
+        <RetryButton onRetry={onRetry} cooldownSeconds={60} />
+      </div>
+    );
+  }
 
   if (type === 'EXPIRED_NO_REFRESH' || type === 'UNAUTHORIZED') {
     return (

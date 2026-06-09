@@ -17,17 +17,19 @@ export interface GoogleTokenStatus {
 }
 
 export type GoogleProfilesError =
-  | 'NO_TOKEN'          // Usuário não tem token Google salvo
+  | 'NO_TOKEN'           // Usuário não tem token Google salvo
   | 'EXPIRED_NO_REFRESH' // Token expirado e sem refresh_token
-  | 'PERMISSION_DENIED' // API não habilitada ou sem acesso (403)
-  | 'UNAUTHORIZED'      // Token inválido (401)
+  | 'PERMISSION_DENIED'  // API não habilitada ou sem acesso (403)
+  | 'QUOTA_EXCEEDED'     // Limite de requisições atingido (429)
+  | 'UNAUTHORIZED'       // Token inválido (401)
   | 'UNKNOWN';
 
 function parseGoogleError(error: any): GoogleProfilesError {
   const status = error?.response?.status;
-  const type = error?.response?.data?.type;
+  const type   = error?.response?.data?.type;
   const message: string = error?.response?.data?.message ?? error?.message ?? '';
 
+  if (status === 429 || type === 'QUOTA_EXCEEDED') return 'QUOTA_EXCEEDED';
   if (status === 401 || message.includes('login novamente') || message.includes('não encontrado')) {
     if (message.includes('refresh')) return 'EXPIRED_NO_REFRESH';
     return 'UNAUTHORIZED';
@@ -58,10 +60,15 @@ export function useGoogleProfiles(enabled = true) {
       return data.data ?? data;
     },
     enabled,
-    staleTime: 5 * 60 * 1000,
-    // Espera 15s antes de tentar novamente (evita estourar quota)
+    staleTime: 10 * 60 * 1000, // 10 min — não recarrega desnecessariamente
+    gcTime:    15 * 60 * 1000, // mantém cache por 15 min mesmo após o modal fechar
+    retry: (failureCount, error: any) => {
+      const status = error?.response?.status;
+      // Nunca retenta em quota exceeded (429) ou permissão (403/401)
+      if (status === 429 || status === 403 || status === 401) return false;
+      return failureCount < 1;
+    },
     retryDelay: 15_000,
-    retry: 1,
   });
 }
 
