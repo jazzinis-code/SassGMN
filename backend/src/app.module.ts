@@ -6,6 +6,7 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { AppConfigModule } from './config/config.module';
 import { PrismaModule } from './common/prisma/prisma.module';
+import { CryptoModule } from './common/crypto/crypto.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -41,6 +42,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     AppConfigModule,
     PrismaModule,
     AuditModule,   // global — disponível em todos os módulos
+    CryptoModule,  // global — criptografia de tokens OAuth
     AuthModule,
     UsersModule,
     BusinessesModule,

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { PrismaService } from '../common/prisma/prisma.service';
@@ -11,6 +11,8 @@ import { PaginatedResponseDto } from '../common/dto/pagination.dto';
 
 @Injectable()
 export class ReviewsService {
+  private readonly logger = new Logger(ReviewsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly businessesService: BusinessesService,
@@ -110,12 +112,21 @@ export class ReviewsService {
   async processSyncJob(businessId: string, userId: string, googleProfileId: string): Promise<void> {
     const reviews = await this.googleService.fetchReviews(userId, googleProfileId);
 
+    let created = 0;
+    let updated = 0;
+
     for (const review of reviews) {
       const existingReview = await this.prisma.review.findUnique({
         where: { googleReviewId: review.reviewId },
       });
 
       if (!existingReview) {
+        // Nova avaliação — se já existe resposta no Google (publicada fora do sistema),
+        // inicia como PUBLISHED em vez de PENDING.
+        const initialStatus = review.reviewReply
+          ? ReviewResponseStatus.PUBLISHED
+          : ReviewResponseStatus.PENDING;
+
         await this.prisma.review.create({
           data: {
             businessId,
@@ -124,11 +135,45 @@ export class ReviewsService {
             rating: review.rating,
             comment: review.comment || null,
             reviewDate: new Date(review.createTime),
-            responseStatus: ReviewResponseStatus.PENDING,
+            responseStatus: initialStatus,
           },
         });
+        created++;
+      } else {
+        // Avaliação existente — o avaliador pode ter editado nota ou texto.
+        // Atualiza sempre o conteúdo para refletir o estado atual no Google.
+        const updateData: {
+          rating: number;
+          comment: string | null;
+          reviewerName: string;
+          responseStatus?: ReviewResponseStatus;
+        } = {
+          rating: review.rating,
+          comment: review.comment || null,
+          reviewerName: review.reviewerName,
+        };
+
+        // Se o Google tem resposta mas nosso registro ainda está pendente/gerado,
+        // é porque a resposta foi publicada fora do sistema — marca como PUBLISHED.
+        const pendingStatuses: ReviewResponseStatus[] = [
+          ReviewResponseStatus.PENDING,
+          ReviewResponseStatus.GENERATED,
+        ];
+        if (review.reviewReply && pendingStatuses.includes(existingReview.responseStatus)) {
+          updateData.responseStatus = ReviewResponseStatus.PUBLISHED;
+        }
+
+        await this.prisma.review.update({
+          where: { id: existingReview.id },
+          data: updateData,
+        });
+        updated++;
       }
     }
+
+    this.logger.log(
+      `processSyncJob — business ${businessId}: ${created} criada(s), ${updated} atualizada(s)`,
+    );
   }
 
   async updateStatus(id: string, userId: string, status: string): Promise<Review> {

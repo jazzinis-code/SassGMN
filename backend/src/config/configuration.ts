@@ -28,6 +28,15 @@ export const openaiConfig = registerAs('openai', () => ({
   model: process.env.OPENAI_MODEL ?? 'gpt-4',
 }));
 
+export const cryptoConfig = registerAs('crypto', () => ({
+  /**
+   * Chave de 256 bits (64 caracteres hex) para criptografia AES-256-GCM dos tokens OAuth.
+   * Gerar: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   * OBRIGATÓRIO em produção. Sem esta variável os tokens são armazenados em texto puro.
+   */
+  tokenEncryptionKey: process.env.TOKEN_ENCRYPTION_KEY,
+}));
+
 export const redisConfig = registerAs('redis', () => ({
   host: process.env.REDIS_HOST ?? 'localhost',
   port: parseInt(process.env.REDIS_PORT ?? '6379', 10),

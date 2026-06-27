@@ -24,7 +24,9 @@ export function initSentry(): void {
     release: process.env.APP_VERSION ?? 'unknown',
 
     // Profiling de performance — captura traces de CPU
-    integrations: [nodeProfilingIntegration()],
+    // Type cast necessário: @sentry/profiling-node bundla sua própria versão de @sentry/core,
+    // causando incompatibilidade de tipos com a versão principal. Comportamento em runtime é correto.
+    integrations: [nodeProfilingIntegration() as Parameters<typeof Sentry.init>[0] extends { integrations?: (infer I)[] | undefined } ? I : never],
 
     // Amostragem: 100% dos erros, 10% das transações em produção
     tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
