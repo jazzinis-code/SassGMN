@@ -18,6 +18,15 @@ const nextConfig = {
   experimental: {
     instrumentationHook: false,
   },
+
+  // Aumenta o timeout de carregamento de chunks para suportar
+  // compilação lenta no primeiro acesso em dev (Node.js v24)
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.output.chunkLoadTimeout = 600_000; // 10 minutos
+    }
+    return config;
+  },
 };
 
 // Sentry desabilitado para desenvolvimento local.
