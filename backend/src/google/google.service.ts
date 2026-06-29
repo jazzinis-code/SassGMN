@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { TokenCryptoService } from '../common/crypto/token-crypto.service';
 
 export interface GoogleReview {
   reviewId: string;
@@ -10,6 +11,8 @@ export interface GoogleReview {
   rating: number;
   comment: string | null;
   createTime: string;
+  /** Resposta já publicada no Google (pode ter vindo de fora do sistema). */
+  reviewReply: string | null;
 }
 
 export interface GoogleBusinessProfile {
@@ -19,7 +22,7 @@ export interface GoogleBusinessProfile {
 }
 
 /**
- * My Business Reviews API v1 — resposta de listagem
+ * Resposta de listagem da My Business Reviews API v4.
  * Ref: https://developers.google.com/my-business/reference/rest/v4/accounts.locations.reviews/list
  */
 interface MyBusinessReviewsResponse {
@@ -39,29 +42,32 @@ interface MyBusinessReview {
 }
 
 /**
- * Base URL da My Business Reviews API v1.
- * A API de reviews não faz parte do googleapis bundle — é chamada diretamente via REST.
+ * Base URL da My Business Reviews API v4.
+ * A API de reviews não faz parte do googleapis bundle — é chamada via REST direto.
  */
 const MY_BUSINESS_API_BASE = 'https://mybusiness.googleapis.com/v4';
 
 @Injectable()
 export class GoogleService {
   private readonly logger = new Logger(GoogleService.name);
-  private readonly oauth2Client: OAuth2Client;
 
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
-  ) {
-    this.oauth2Client = new google.auth.OAuth2(
-      this.configService.get<string>('google.clientId'),
-      this.configService.get<string>('google.clientSecret'),
-      this.configService.get<string>('google.callbackUrl'),
-    );
-  }
+    private readonly crypto: TokenCryptoService,
+  ) {}
 
   // ─── Token management ────────────────────────────────────────────────────────
 
+  /**
+   * Cria um OAuth2Client autenticado para o usuário informado.
+   *
+   * Um novo cliente é criado por chamada — evita condição de corrida
+   * entre requisições concorrentes de usuários diferentes.
+   *
+   * Renova automaticamente o access_token se expirado e persiste
+   * o novo token criptografado no banco.
+   */
   async getAuthenticatedClient(userId: string): Promise<OAuth2Client> {
     const token = await this.prisma.googleToken.findFirst({
       where: { userId },
@@ -74,27 +80,41 @@ export class GoogleService {
       );
     }
 
-    this.oauth2Client.setCredentials({
-      access_token: token.accessToken,
-      refresh_token: token.refreshToken,
+    // Descriptografa antes de passar ao OAuth2Client (migração transparente)
+    const accessToken = this.crypto.decrypt(token.accessToken);
+    const refreshToken = this.crypto.decrypt(token.refreshToken);
+
+    const client = this.createOAuth2Client();
+    client.setCredentials({
+      access_token: accessToken,
+      refresh_token: refreshToken,
       expiry_date: token.expiresAt.getTime(),
     });
 
     // Renova automaticamente se expirado
     if (token.expiresAt.getTime() < Date.now()) {
       try {
-        const { credentials } = await this.oauth2Client.refreshAccessToken();
+        const { credentials } = await client.refreshAccessToken();
+
+        // Criptografa antes de persistir — só encripta se veio novo valor do Google
+        const newAccessToken = credentials.access_token
+          ? this.crypto.encrypt(credentials.access_token)
+          : token.accessToken; // já está criptografado (ou plaintext em migração)
+
+        const newRefreshToken = credentials.refresh_token
+          ? this.crypto.encrypt(credentials.refresh_token)
+          : token.refreshToken; // idem
 
         await this.prisma.googleToken.update({
           where: { id: token.id },
           data: {
-            accessToken: credentials.access_token ?? token.accessToken,
-            refreshToken: credentials.refresh_token ?? token.refreshToken,
+            accessToken: newAccessToken,
+            refreshToken: newRefreshToken,
             expiresAt: new Date(credentials.expiry_date ?? Date.now() + 3_600_000),
           },
         });
 
-        this.oauth2Client.setCredentials(credentials);
+        client.setCredentials(credentials);
       } catch (error) {
         this.logger.error('Erro ao renovar token do Google', error);
         throw new UnauthorizedException(
@@ -103,7 +123,7 @@ export class GoogleService {
       }
     }
 
-    return this.oauth2Client;
+    return client;
   }
 
   // ─── Google Business Profile ─────────────────────────────────────────────────
@@ -150,31 +170,59 @@ export class GoogleService {
   // ─── Reviews ─────────────────────────────────────────────────────────────────
 
   /**
-   * Busca avaliações de um local do Google Business Profile.
+   * Busca TODAS as avaliações de um local do Google Business Profile.
+   *
+   * Percorre todas as páginas via `nextPageToken` — garante que avaliações
+   * além das primeiras 50 também sejam sincronizadas.
    *
    * Usa chamada REST direta pois a My Business Reviews API v4 não está
-   * disponível no googleapis bundle — o SDK não expõe `google.mybusiness`.
+   * disponível no googleapis bundle.
    *
    * Ref: https://developers.google.com/my-business/reference/rest/v4/accounts.locations.reviews/list
    *
-   * @param userId    ID do usuário no sistema (para recuperar token OAuth)
-   * @param locationName  Path do local no formato "accounts/{accountId}/locations/{locationId}"
+   * @param userId        ID do usuário (para recuperar token OAuth)
+   * @param locationName  Path "accounts/{accountId}/locations/{locationId}"
    */
   async fetchReviews(userId: string, locationName: string): Promise<GoogleReview[]> {
     const auth = await this.getAuthenticatedClient(userId);
 
-    try {
-      const url = `${MY_BUSINESS_API_BASE}/${locationName}/reviews?pageSize=50`;
-      const response = await auth.request<MyBusinessReviewsResponse>({ url });
-      const reviews = response.data.reviews ?? [];
+    const allReviews: GoogleReview[] = [];
+    let pageToken: string | undefined;
+    let page = 1;
 
-      return reviews.map((review) => ({
-        reviewId: review.reviewId ?? review.name?.split('/').pop() ?? '',
-        reviewerName: review.reviewer?.displayName ?? 'Anônimo',
-        rating: this.parseRating(review.starRating ?? ''),
-        comment: review.comment ?? null,
-        createTime: review.createTime ?? new Date().toISOString(),
-      }));
+    try {
+      do {
+        const params = new URLSearchParams({ pageSize: '50' });
+        if (pageToken) params.set('pageToken', pageToken);
+
+        const url = `${MY_BUSINESS_API_BASE}/${locationName}/reviews?${params.toString()}`;
+        const response = await auth.request<MyBusinessReviewsResponse>({ url });
+
+        const reviews = response.data.reviews ?? [];
+        this.logger.debug(
+          `fetchReviews — página ${page}: ${reviews.length} avaliação(ões) recebida(s)`,
+        );
+
+        for (const review of reviews) {
+          allReviews.push({
+            reviewId: review.reviewId ?? review.name?.split('/').pop() ?? '',
+            reviewerName: review.reviewer?.displayName ?? 'Anônimo',
+            rating: this.parseRating(review.starRating ?? ''),
+            comment: review.comment ?? null,
+            createTime: review.createTime ?? new Date().toISOString(),
+            reviewReply: review.reviewReply?.comment ?? null,
+          });
+        }
+
+        pageToken = response.data.nextPageToken;
+        page++;
+      } while (pageToken);
+
+      this.logger.log(
+        `fetchReviews — ${allReviews.length} avaliação(ões) total em ${page - 1} página(s)`,
+      );
+
+      return allReviews;
     } catch (error) {
       this.logger.error('Erro ao buscar avaliações do Google Business', error);
       throw error;
@@ -184,9 +232,7 @@ export class GoogleService {
   // ─── Replies ─────────────────────────────────────────────────────────────────
 
   /**
-   * Publica ou atualiza uma resposta a uma avaliação.
-   *
-   * Usa chamada REST direta pelo mesmo motivo que fetchReviews.
+   * Publica ou atualiza uma resposta a uma avaliação via REST direto.
    *
    * Ref: https://developers.google.com/my-business/reference/rest/v4/accounts.locations.reviews/updateReply
    *
@@ -220,6 +266,14 @@ export class GoogleService {
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+  private createOAuth2Client(): OAuth2Client {
+    return new google.auth.OAuth2(
+      this.configService.get<string>('google.clientId'),
+      this.configService.get<string>('google.clientSecret'),
+      this.configService.get<string>('google.callbackUrl'),
+    );
+  }
 
   private parseRating(starRating: string): number {
     const ratingMap: Record<string, number> = {

@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { UsersService } from '../users/users.service';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AuditService, AuditAction } from '../audit/audit.service';
+import { TokenCryptoService } from '../common/crypto/token-crypto.service';
 
 export interface GoogleProfile {
   id: string;
@@ -25,6 +26,7 @@ export class AuthService {
     private readonly usersService: UsersService,
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly crypto: TokenCryptoService,
   ) {}
 
   async validateGoogleUser(profile: GoogleProfile) {
@@ -76,6 +78,10 @@ export class AuthService {
     refreshToken: string,
     expiresIn?: number,
   ) {
+    // Criptografa antes de persistir (AES-256-GCM via TokenCryptoService)
+    const encryptedAccess = this.crypto.encrypt(accessToken);
+    const encryptedRefresh = this.crypto.encrypt(refreshToken);
+
     // Usa expiresIn real retornado pelo Google (em segundos), com fallback de 1h
     const expiresAt = new Date(Date.now() + (expiresIn ?? 3600) * 1000);
 
@@ -86,11 +92,11 @@ export class AuthService {
     if (existingToken) {
       await this.prisma.googleToken.update({
         where: { id: existingToken.id },
-        data: { accessToken, refreshToken, expiresAt },
+        data: { accessToken: encryptedAccess, refreshToken: encryptedRefresh, expiresAt },
       });
     } else {
       await this.prisma.googleToken.create({
-        data: { userId, accessToken, refreshToken, expiresAt },
+        data: { userId, accessToken: encryptedAccess, refreshToken: encryptedRefresh, expiresAt },
       });
     }
   }
@@ -100,6 +106,7 @@ export class AuthService {
     accessToken: string,
     expiresIn?: number,
   ) {
+    const encryptedAccess = this.crypto.encrypt(accessToken);
     const expiresAt = new Date(Date.now() + (expiresIn ?? 3600) * 1000);
 
     const existingToken = await this.prisma.googleToken.findFirst({
@@ -109,7 +116,7 @@ export class AuthService {
     if (existingToken) {
       await this.prisma.googleToken.update({
         where: { id: existingToken.id },
-        data: { accessToken, expiresAt },
+        data: { accessToken: encryptedAccess, expiresAt },
       });
     }
     // Se não existe token nenhum, aguarda próximo login com prompt: consent

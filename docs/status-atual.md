@@ -106,6 +106,17 @@ PostgreSQL  Redis :6379                  APIs Externas
 - [x] 11 pontos instrumentados: login, register, business CRUD, sync, generate, approve, reject, publish, connect-google
 - [x] `GET /users/audit-log?limit=50` para o usuário consultar seu histórico
 
+### Integração Google API — Fase 3
+
+- [x] **Criptografia de tokens OAuth em repouso** — `TokenCryptoService` com AES-256-GCM, IV aleatório por operação, migração transparente para tokens legados (texto puro detectado e re-criptografado na próxima atualização)
+- [x] **`TOKEN_ENCRYPTION_KEY`** — variável de 256 bits; sem ela, o serviço registra aviso e opera sem criptografia (retrocompatível)
+- [x] **`CryptoModule` global** — disponível em toda a aplicação sem import explícito
+- [x] **OAuth2Client criado por requisição** — eliminada condição de corrida entre usuários concorrentes (instância compartilhada sobrescrevia credenciais)
+- [x] **Paginação completa em `fetchReviews`** — loop sobre `nextPageToken` busca TODAS as avaliações (antes: apenas primeiras 50)
+- [x] **`reviewReply` na interface `GoogleReview`** — resposta já publicada no Google é retornada pelo sync
+- [x] **`processSyncJob` com upsert completo** — atualiza rating/comment/reviewerName em avaliações existentes; novas com `reviewReply` iniciam como `PUBLISHED`; status `PENDING/GENERATED` + `reviewReply` detectado → promovidos para `PUBLISHED`
+- [x] **Fix Sentry** — type assertion em `nodeProfilingIntegration()` resolve incompatibilidade de tipos entre versões bundled/standalone do `@sentry/core`
+
 ### Monitoramento — Sentry
 - [x] Backend `@sentry/node`: reporta erros HTTP 5xx, ignora 4xx esperados
 - [x] Frontend `@sentry/nextjs`: client / server / edge configs + Session Replay
@@ -135,9 +146,8 @@ PostgreSQL  Redis :6379                  APIs Externas
 | # | Funcionalidade | Observação |
 |---|---|---|
 | 1 | **HTTPS em produção** | nginx configurado — depende de certificados reais (Let's Encrypt ou comprado) |
-| 2 | **Criptografia dos tokens OAuth** | `google_tokens` armazena access/refresh em texto puro no banco |
-| 3 | **Testes de integração** | Apenas testes unitários — sem cobertura E2E ou de integração |
-| 4 | **Processor da fila `responses`** | Fila registrada no AppModule, sem `@Process` implementado |
+| 2 | **Testes de integração** | Apenas testes unitários — sem cobertura E2E ou de integração |
+| 3 | **Processor da fila `responses`** | Fila registrada no AppModule, sem `@Process` implementado |
 
 ### Prioridade Média
 
@@ -242,6 +252,7 @@ Todas as FKs com onDelete: Cascade
 
 | Hash | Mensagem | Etapa |
 |---|---|---|
+| (pendente) | `feat(google): Fase 3 — criptografia OAuth, paginação e upsert de reviews` | Fase 3 — Google API |
 | `b1c4aa5` | `chore(deps): registra dependências Sentry nos package.json` | Fase 2 — finalização |
 | `5066a0f` | `docs: Etapa 9 — README e docs/status-atual.md atualizados para Fase 2` | Etapa 9 |
 | `92f32be` | `feat(sentry): Etapa 8 — monitoramento de erros com Sentry` | Etapa 8 |
@@ -287,7 +298,6 @@ npm run dev:frontend           # porta 3000
 
 | Prioridade | Tarefa |
 |---|---|
-| 🔴 Alta | Criptografar tokens OAuth no banco (`google_tokens`) |
 | 🔴 Alta | Configurar certificados TLS reais (Let's Encrypt) em produção |
 | 🟡 Média | Cache Redis para `GET /dashboard/stats` (TTL 5 min) |
 | 🟡 Média | Testes de integração — fluxo OAuth E2E, sync Bull com Redis real |
@@ -318,6 +328,7 @@ npm run dev:frontend           # porta 3000
 | `nest build` | ✅ OK | Junho 2026 |
 | `prisma validate` | ✅ Schema válido | Junho 2026 |
 
+
 ---
 
-*Última atualização: Junho 2026 — Fase 2 concluída — commit `b1c4aa5`*
+*Última atualização: Junho 2026 — Fase 3 Google API concluída*

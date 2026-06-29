@@ -11,7 +11,7 @@ export function useResponses(page = 1, limit = 10) {
       const { data } = await api.get('/responses', {
         params: { page, limit },
       });
-      return data;
+      return data.data ?? data;
     },
   });
 }
@@ -22,7 +22,7 @@ export function useGenerateResponse() {
   return useMutation({
     mutationFn: async (reviewId: string) => {
       const { data } = await api.post(`/responses/generate/${reviewId}`);
-      return data;
+      return data.data ?? data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['responses'] });
@@ -37,7 +37,7 @@ export function useApproveResponse() {
   return useMutation({
     mutationFn: async ({ id, publishedText }: { id: string; publishedText?: string }) => {
       const { data } = await api.patch(`/responses/${id}/approve`, { publishedText });
-      return data;
+      return data.data ?? data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['responses'] });
@@ -52,7 +52,7 @@ export function useRejectResponse() {
   return useMutation({
     mutationFn: async (id: string) => {
       const { data } = await api.patch(`/responses/${id}/reject`);
-      return data;
+      return data.data ?? data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['responses'] });
@@ -67,7 +67,7 @@ export function usePublishResponse() {
   return useMutation({
     mutationFn: async (id: string) => {
       const { data } = await api.post(`/responses/${id}/publish`);
-      return data;
+      return data.data ?? data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['responses'] });

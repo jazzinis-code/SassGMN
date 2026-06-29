@@ -18,8 +18,8 @@ export function useGoogleProfiles(enabled = true) {
       return data.data ?? data;
     },
     enabled,
-    staleTime: 5 * 60 * 1000, // 5 min
-    retry: 1,
+    staleTime: 10 * 60 * 1000, // 10 min — evita chamadas repetidas à API do Google
+    retry: 0, // não retenta — quota da Google Business API é limitada
   });
 }
 

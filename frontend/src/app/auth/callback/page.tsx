@@ -24,6 +24,11 @@ function CallbackHandler() {
     // Persiste o JWT do backend para uso nas chamadas da API
     localStorage.setItem('api_token', token);
 
+    // Define cookie para o middleware (server-side) reconhecer a sessão
+    // 30 dias de validade, SameSite=Lax para compatibilidade com redirects OAuth
+    const maxAge = 30 * 24 * 60 * 60;
+    document.cookie = `api_token=${token}; path=/; max-age=${maxAge}; SameSite=Lax`;
+
     router.replace('/dashboard');
   }, [router, searchParams]);
 

@@ -11,7 +11,9 @@ export function useBusinesses(page = 1, limit = 10) {
       const { data } = await api.get('/businesses', {
         params: { page, limit },
       });
-      return data;
+      // Backend envolve toda resposta em { data, statusCode, timestamp }
+      // PaginatedResponse fica em data.data
+      return data.data ?? data;
     },
   });
 }
@@ -21,7 +23,7 @@ export function useBusiness(id: string) {
     queryKey: ['businesses', id],
     queryFn: async () => {
       const { data } = await api.get(`/businesses/${id}`);
-      return data;
+      return data.data ?? data;
     },
     enabled: !!id,
   });
@@ -33,7 +35,7 @@ export function useCreateBusiness() {
   return useMutation({
     mutationFn: async (dto: CreateBusinessDto) => {
       const { data } = await api.post('/businesses', dto);
-      return data;
+      return data.data ?? data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['businesses'] });
@@ -47,7 +49,7 @@ export function useUpdateBusiness() {
   return useMutation({
     mutationFn: async ({ id, dto }: { id: string; dto: UpdateBusinessDto }) => {
       const { data } = await api.patch(`/businesses/${id}`, dto);
-      return data;
+      return data.data ?? data;
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['businesses'] });
