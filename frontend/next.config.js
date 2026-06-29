@@ -1,7 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Gera output standalone para Docker (inclui server.js auto-contido)
-  output: 'standalone',
+  // output: 'standalone', // Apenas para Docker/produção — desabilitado para dev local
 
   async rewrites() {
     return [
