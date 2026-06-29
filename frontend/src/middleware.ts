@@ -1,26 +1,30 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { getToken } from 'next-auth/jwt';
 
+/**
+ * Middleware de proteção de rotas.
+ *
+ * Usa o cookie `api_token` (JWT do backend) como indicador de sessão.
+ * O cookie é gravado pela página /auth/callback após o OAuth via backend.
+ *
+ * Anteriormente usava next-auth/jwt, mas o fluxo OAuth é feito diretamente
+ * pelo backend NestJS — o NextAuth não está mais no caminho do login.
+ */
 export async function middleware(request: NextRequest) {
-  const token = await getToken({
-    req: request,
-    secret: process.env.NEXTAUTH_SECRET,
-  });
-
+  const apiToken = request.cookies.get('api_token')?.value;
   const { pathname } = request.nextUrl;
 
-  // Protect dashboard routes
+  // Rotas do dashboard exigem sessão ativa
   if (pathname.startsWith('/dashboard')) {
-    if (!token) {
+    if (!apiToken) {
       const url = new URL('/', request.url);
       url.searchParams.set('callbackUrl', pathname);
       return NextResponse.redirect(url);
     }
   }
 
-  // Redirect authenticated users from login page to dashboard
-  if (pathname === '/' && token) {
+  // Usuário autenticado na raiz → redireciona para dashboard
+  if (pathname === '/' && apiToken) {
     return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 

@@ -26,8 +26,9 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       if (typeof window !== 'undefined') {
-        // Token inválido ou expirado — limpa e redireciona para login
+        // Token inválido ou expirado — limpa localStorage e cookie, volta para login
         localStorage.removeItem('api_token');
+        document.cookie = 'api_token=; path=/; max-age=0; SameSite=Lax';
         window.location.href = '/';
       }
     }
